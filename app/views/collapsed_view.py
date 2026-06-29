@@ -146,7 +146,4 @@ class CollapsedView(QFrame):
             QPushButton:checked {{
                 color: {C["danger"]};
             }}
-            QPushButton:!checked {{
-                color: {C["text_disabled"]};
-            }}
         """
