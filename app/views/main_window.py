@@ -205,18 +205,10 @@ class MainWindow(QWidget):
         return False
 
     def set_always_on_top(self, enabled: bool) -> None:
-        """切换窗口是否置顶（需 hide/show 刷新窗口标志）"""
-        visible = self.isVisible()
-        self.hide()
-        flags = self.windowFlags()
-        if enabled:
-            flags |= Qt.WindowStaysOnTopHint
-        else:
-            flags &= ~Qt.WindowStaysOnTopHint
-        self.setWindowFlags(flags)
-        if visible:
-            self.show()
-            self.raise_()
+        """切换窗口是否置顶（通过 QWindow.setFlag 避免窗口重建闪烁）"""
+        handle = self.windowHandle()
+        if handle:
+            handle.setFlag(Qt.WindowStaysOnTopHint, enabled)
 
     def _snap_to_screen_edge(self) -> None:
         """确保窗口不超出屏幕边界"""
