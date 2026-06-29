@@ -14,7 +14,7 @@ from __future__ import annotations
 from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QScrollArea, QFrame, QSizePolicy,
+    QLineEdit, QScrollArea, QFrame, QSizePolicy, QSizeGrip,
 )
 from app.config import AppConfig
 from app.views.theme import AppTheme
@@ -350,6 +350,7 @@ class ExpandedView(QFrame):
 
         layout = QHBoxLayout()
         layout.setContentsMargins(12, 0, 4, 0)
+        layout.setSpacing(4)
 
         self._archive_btn = QPushButton("📦 查看归档")
         self._archive_btn.setStyleSheet(self._footer_btn_style())
@@ -383,10 +384,16 @@ class ExpandedView(QFrame):
         """)
         quit_btn.clicked.connect(self.signal_quit_requested.emit)
 
+        # 缩放手柄
+        grip = QSizeGrip(footer)
+        grip.setFixedSize(16, 16)
+        grip.setStyleSheet("QSizeGrip { background: transparent; }")
+
         layout.addWidget(self._archive_btn)
         layout.addWidget(spacer)
         layout.addWidget(self._stats_label)
         layout.addWidget(quit_btn)
+        layout.addWidget(grip)
         footer.setLayout(layout)
         return footer
 

@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, Signal, QPoint, QSize, QSettings
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget, QApplication, QSizeGrip
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget, QApplication
 from PySide6.QtGui import QMouseEvent, QScreen
 
 from app.config import AppConfig
@@ -55,17 +55,6 @@ class MainWindow(QWidget):
         layout.setSpacing(0)
         layout.addWidget(self._stack)
         self.setLayout(layout)
-
-        # ── 大小缩放控件（用于展开模式）──────────────────
-        self._size_grip = QSizeGrip(self)
-        self._size_grip.setFixedSize(16, 16)
-        self._size_grip.setStyleSheet("""
-            QSizeGrip {
-                background: transparent;
-                border: none;
-            }
-        """)
-        self._size_grip.setVisible(False)
 
         # ── 应用全局样式 ──────────────────────────────────
         self.setStyleSheet(AppTheme.global_qss())
@@ -113,8 +102,6 @@ class MainWindow(QWidget):
         self.setMinimumSize(AppConfig.EXPANDED_MIN_WIDTH, AppConfig.EXPANDED_MIN_HEIGHT)
         self.setMaximumSize(AppConfig.EXPANDED_MAX_WIDTH, AppConfig.EXPANDED_MAX_HEIGHT)
         self._stack.setCurrentWidget(self._expanded_view)
-        self._size_grip.setVisible(True)
-        self._size_grip.raise_()
         self._animate_size(self._expanded_size.width(), self._expanded_size.height())
         self.signal_mode_changed.emit("expanded")
 
@@ -128,7 +115,6 @@ class MainWindow(QWidget):
         self.setMaximumSize(16777215, 16777215)
         self.setMinimumSize(0, 0)
         self.setFixedSize(QSize(16777215, 16777215))
-        self._size_grip.setVisible(False)
         self._animate_size(self._collapsed_size.width(), self._collapsed_size.height())
         self.signal_mode_changed.emit("collapsed")
 

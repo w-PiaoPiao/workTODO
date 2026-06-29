@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Qt, QEvent
+from PySide6.QtCore import Signal, Qt, QTimer
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QSizePolicy, QWidget,
@@ -61,7 +61,6 @@ class TodoCard(QFrame):
         """)
         self._title_label.setMinimumWidth(0)
         self._title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self._title_label.installEventFilter(self)
 
         # 双击标题进入编辑模式
         self._title_label.mouseDoubleClickEvent = self._start_edit
@@ -158,6 +157,7 @@ class TodoCard(QFrame):
 
         self._title_label.setText(item.title)
         self._title_label.setToolTip(item.title)
+        QTimer.singleShot(0, self._elide_title)
 
         # 置顶状态
         self._sticky_btn.setStyleSheet(self._sticky_btn_style(item.sticky))
@@ -174,21 +174,24 @@ class TodoCard(QFrame):
         self.signal_deleted.emit(self._item.id)
 
     def _on_toggle_sticky(self) -> None:
-        self._item.sticky = not self._item.sticky
-        self._sticky_btn.setStyleSheet(self._sticky_btn_style(self._item.sticky))
+        # 只发射信号，由控制器处理翻转和刷新
         self.signal_sticky_toggled.emit(self._item.id)
 
     # ── 文字溢出省略 ──────────────────────────────────────
 
-    def eventFilter(self, obj, event):
-        if obj == self._title_label and event.type() == QEvent.Resize:
-            fm = self._title_label.fontMetrics()
-            elided = fm.elidedText(
-                self._item.title, Qt.ElideRight, self._title_label.width()
-            )
-            if elided != self._title_label.text():
-                self._title_label.setText(elided)
-        return super().eventFilter(obj, event)
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide_title()
+
+    def _elide_title(self) -> None:
+        if not self._item or self._title_label.width() < 10:
+            return
+        fm = self._title_label.fontMetrics()
+        elided = fm.elidedText(
+            self._item.title, Qt.ElideRight, self._title_label.width(),
+        )
+        if elided != self._title_label.text():
+            self._title_label.setText(elided)
 
     def _on_progress_submit(self) -> None:
         text = self._progress_input.text().strip()
