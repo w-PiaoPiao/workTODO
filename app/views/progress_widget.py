@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QSizePolicy,
 )
@@ -23,6 +23,7 @@ class ProgressWidget(QWidget):
         self._entries: list[ProgressEntry] = []
         self._collapsed = True
         self._threshold = AppConfig.MAX_PROGRESS_COLLAPSED
+        self._text_labels: dict[QLabel, str] = {}  # label → full text
 
         self._build_ui()
 
@@ -63,6 +64,7 @@ class ProgressWidget(QWidget):
     def _refresh(self) -> None:
         """刷新显示"""
         # 清空
+        self._text_labels.clear()
         while self._layout.count():
             item = self._layout.takeAt(0)
             widget = item.widget()
@@ -125,9 +127,11 @@ class ProgressWidget(QWidget):
             color: {AppTheme.C["text_secondary"]};
             background: transparent;
         """)
-        text_label.setWordWrap(True)
         text_label.setMinimumWidth(0)
         text_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        text_label.setToolTip(entry.text)
+        text_label.installEventFilter(self)
+        self._text_labels[text_label] = entry.text
 
         layout.addWidget(time_label)
         layout.addWidget(text_label, stretch=1)
@@ -137,3 +141,14 @@ class ProgressWidget(QWidget):
     def _on_toggle(self) -> None:
         self._collapsed = not self._collapsed
         self._refresh()
+
+    # ── 文字溢出省略 ──────────────────────────────────────
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Resize and obj in self._text_labels:
+            full = self._text_labels[obj]
+            fm = obj.fontMetrics()
+            elided = fm.elidedText(full, Qt.ElideRight, obj.width())
+            if elided != obj.text():
+                obj.setText(elided)
+        return super().eventFilter(obj, event)

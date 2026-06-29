@@ -11,11 +11,12 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QEvent
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QSizePolicy, QWidget,
 )
+from PySide6.QtGui import QFontMetrics
 from app.config import AppConfig
 from app.views.theme import AppTheme
 from app.models.todo_item import TodoItem, ProgressEntry
@@ -58,9 +59,9 @@ class TodoCard(QFrame):
             background: transparent;
             padding: 2px 0;
         """)
-        self._title_label.setWordWrap(True)
         self._title_label.setMinimumWidth(0)
         self._title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._title_label.installEventFilter(self)
 
         # 双击标题进入编辑模式
         self._title_label.mouseDoubleClickEvent = self._start_edit
@@ -176,6 +177,18 @@ class TodoCard(QFrame):
         self._item.sticky = not self._item.sticky
         self._sticky_btn.setStyleSheet(self._sticky_btn_style(self._item.sticky))
         self.signal_sticky_toggled.emit(self._item.id)
+
+    # ── 文字溢出省略 ──────────────────────────────────────
+
+    def eventFilter(self, obj, event):
+        if obj == self._title_label and event.type() == QEvent.Resize:
+            fm = self._title_label.fontMetrics()
+            elided = fm.elidedText(
+                self._item.title, Qt.ElideRight, self._title_label.width()
+            )
+            if elided != self._title_label.text():
+                self._title_label.setText(elided)
+        return super().eventFilter(obj, event)
 
     def _on_progress_submit(self) -> None:
         text = self._progress_input.text().strip()

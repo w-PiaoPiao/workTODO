@@ -59,7 +59,12 @@ class MainWindow(QWidget):
         # ── 大小缩放控件（用于展开模式）──────────────────
         self._size_grip = QSizeGrip(self)
         self._size_grip.setFixedSize(16, 16)
-        self._size_grip.setStyleSheet("background: transparent;")
+        self._size_grip.setStyleSheet("""
+            QSizeGrip {
+                background: transparent;
+                border: none;
+            }
+        """)
         self._size_grip.setVisible(False)
 
         # ── 应用全局样式 ──────────────────────────────────
@@ -109,6 +114,7 @@ class MainWindow(QWidget):
         self.setMaximumSize(AppConfig.EXPANDED_MAX_WIDTH, AppConfig.EXPANDED_MAX_HEIGHT)
         self._stack.setCurrentWidget(self._expanded_view)
         self._size_grip.setVisible(True)
+        self._size_grip.raise_()
         self._animate_size(self._expanded_size.width(), self._expanded_size.height())
         self.signal_mode_changed.emit("expanded")
 
