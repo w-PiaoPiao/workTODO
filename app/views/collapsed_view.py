@@ -135,7 +135,7 @@ class CollapsedView(QFrame):
         return f"""
             QPushButton {{
                 font-size: 13px;
-                color: {C["accent"]};
+                color: {C["text_disabled"]};
                 border-radius: 4px;
                 padding: 2px;
                 background: transparent;
@@ -144,7 +144,7 @@ class CollapsedView(QFrame):
                 background: {C["bg_hover"]};
             }}
             QPushButton:checked {{
-                color: {C["accent"]};
+                color: {C["danger"]};
             }}
             QPushButton:!checked {{
                 color: {C["text_disabled"]};
