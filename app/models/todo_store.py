@@ -125,7 +125,10 @@ class TodoStore:
         }
 
     def auto_archive_old(self, days: int = 30) -> int:
-        """自动归档超过指定天数的活跃待办，返回归档数量"""
+        """自动归档超过指定天数且无近期进度更新的活跃待办，返回归档数量
+
+        条件：创建超过 days 天，且最近一条进度也超过 days 天（若无进度则只看创建时间）
+        """
         from datetime import datetime, timezone, timedelta
         now = datetime.now(timezone(timedelta(hours=8), "CST"))
         cutoff = now - timedelta(days=days)
@@ -136,11 +139,21 @@ class TodoStore:
         for item in todos:
             try:
                 created = datetime.fromisoformat(item.created_at)
-                if item.is_active and created < cutoff:
-                    item.status = "archived"
-                    old.append(item)
-                else:
+                if not item.is_active or created >= cutoff:
                     keep.append(item)
+                    continue
+
+                # 检查最近一条进度的时间
+                if item.progress:
+                    last_progress = datetime.fromisoformat(item.progress[-1].timestamp)
+                    if last_progress >= cutoff:
+                        # 近期有进度更新，保留
+                        keep.append(item)
+                        continue
+
+                # 创建 > days 天 且 无近期进度 → 归档
+                item.status = "archived"
+                old.append(item)
             except (ValueError, TypeError):
                 keep.append(item)
 
