@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.spec
+
+# 环境
+venv/
+.env
+
+# 运行时数据（但保留 data 目录结构）
+data/*.json
+
+# 打包
+*.exe
+
+# IDE
+.vscode/
+.idea/
+
+# 系统
+Thumbs.db
+.DS_Store
