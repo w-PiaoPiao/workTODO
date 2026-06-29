@@ -186,9 +186,15 @@ class TodoCard(QFrame):
     def _elide_title(self) -> None:
         if not self._item or self._title_label.width() < 10:
             return
+        # 可用宽度 = 卡片宽度 - 左右边距(20) - 按钮(24+40+24) - 间隔(3*8)
+        avail = self.width() - 132
+        if avail < 30:
+            avail = self._title_label.width()
+        # 物理约束标签宽度防止溢出
+        self._title_label.setMaximumWidth(avail)
         fm = self._title_label.fontMetrics()
         elided = fm.elidedText(
-            self._item.title, Qt.ElideRight, self._title_label.width(),
+            self._item.title, Qt.ElideRight, avail,
         )
         if elided != self._title_label.text():
             self._title_label.setText(elided)

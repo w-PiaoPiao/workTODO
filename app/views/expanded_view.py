@@ -384,10 +384,21 @@ class ExpandedView(QFrame):
         """)
         quit_btn.clicked.connect(self.signal_quit_requested.emit)
 
-        # 缩放手柄
+        # 缩放手柄（右下角三角图案）
         grip = QSizeGrip(footer)
-        grip.setFixedSize(16, 16)
-        grip.setStyleSheet("QSizeGrip { background: transparent; }")
+        grip.setFixedSize(20, 20)
+        grip.setStyleSheet("""
+            QSizeGrip {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0.65 transparent, stop:0.66 #999999,
+                    stop:0.68 #999999, stop:0.69 transparent,
+                    stop:0.75 transparent, stop:0.76 #999999,
+                    stop:0.78 #999999, stop:0.79 transparent,
+                    stop:0.85 transparent, stop:0.86 #999999,
+                    stop:0.88 #999999, stop:0.89 transparent);
+                border: none;
+            }
+        """)
 
         layout.addWidget(self._archive_btn)
         layout.addWidget(spacer)

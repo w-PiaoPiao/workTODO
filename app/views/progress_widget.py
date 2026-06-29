@@ -148,6 +148,7 @@ class ProgressWidget(QWidget):
         if event.type() == QEvent.Resize and obj in self._text_labels:
             full = self._text_labels[obj]
             fm = obj.fontMetrics()
+            obj.setMaximumWidth(obj.width())
             elided = fm.elidedText(full, Qt.ElideRight, obj.width())
             if elided != obj.text():
                 obj.setText(elided)

@@ -98,14 +98,15 @@ class AppTheme:
                 background: transparent;
             }}
 
-            /* 工具提示 */
+            /* 工具提示（亮底暗字，高可读性） */
             QToolTip {{
-                background: {C["text_primary"]};
-                color: {C["bg_card"]};
-                border: none;
+                background: {C["bg_card"]};
+                color: {C["text_primary"]};
+                border: 1px solid {C["border"]};
                 border-radius: 4px;
-                padding: 4px 8px;
+                padding: 6px 10px;
                 font-size: 10pt;
+                max-width: 400px;
             }}
         """
 
