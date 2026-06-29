@@ -32,6 +32,7 @@ class ExpandedView(QFrame):
     signal_search_changed = Signal(str)  # query
     signal_archive_view_requested = Signal()
     signal_quit_requested = Signal()  # 退出应用
+    signal_toggle_pin = Signal(bool)  # 置顶切换
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -121,6 +122,15 @@ class ExpandedView(QFrame):
         self._search_btn.setStyleSheet(self._icon_btn_style())
         self._search_btn.clicked.connect(self._toggle_search)
 
+        # 置顶切换按钮
+        self._pin_btn = QPushButton("📌")
+        self._pin_btn.setFixedSize(28, 28)
+        self._pin_btn.setToolTip("窗口置顶（点击切换）")
+        self._pin_btn.setCheckable(True)
+        self._pin_btn.setChecked(True)
+        self._pin_btn.setStyleSheet(self._pin_btn_style())
+        self._pin_btn.toggled.connect(self.signal_toggle_pin.emit)
+
         # 折叠按钮
         collapse_btn = QPushButton("━")
         collapse_btn.setFixedSize(28, 28)
@@ -149,6 +159,7 @@ class ExpandedView(QFrame):
         layout.addWidget(title)
         layout.addWidget(spacer)
         layout.addWidget(self._search_btn)
+        layout.addWidget(self._pin_btn)
         layout.addWidget(collapse_btn)
         layout.addWidget(quit_btn)
         bar.setLayout(layout)
@@ -369,6 +380,10 @@ class ExpandedView(QFrame):
         self._stats_label.setText(f"共 {active_count} 项")
         self._archive_btn.setText(f"📦 查看归档 ({archived_count})")
 
+    def set_pinned(self, pinned: bool) -> None:
+        """同步置顶按钮状态（由控制器调用）"""
+        self._pin_btn.setChecked(pinned)
+
     # ── 样式辅助 ──────────────────────────────────────────
 
     @staticmethod
@@ -385,6 +400,28 @@ class ExpandedView(QFrame):
             QPushButton:hover {{
                 background: {C["bg_hover"]};
                 color: {C["accent"]};
+            }}
+        """
+
+    @staticmethod
+    def _pin_btn_style() -> str:
+        C = AppTheme.C
+        return f"""
+            QPushButton {{
+                font-size: 13px;
+                color: {C["accent"]};
+                border-radius: 4px;
+                padding: 2px;
+                background: transparent;
+            }}
+            QPushButton:hover {{
+                background: {C["bg_hover"]};
+            }}
+            QPushButton:checked {{
+                color: {C["accent"]};
+            }}
+            QPushButton:!checked {{
+                color: {C["text_disabled"]};
             }}
         """
 

@@ -6,11 +6,12 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QPoint
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QScrollArea, QWidget, QFrame, QSizePolicy,
 )
+from PySide6.QtGui import QMouseEvent
 from app.config import AppConfig
 from app.views.theme import AppTheme
 from app.models.todo_item import TodoItem
@@ -25,6 +26,7 @@ class ArchiveDialog(QDialog):
         super().__init__(parent)
         self._all_items = items
         self._filtered_items = items[:]
+        self._drag_pos = QPoint()  # 拖拽用
 
         self.setWindowTitle("归档记录")
         self.setFixedSize(420, 480)
@@ -41,6 +43,25 @@ class ArchiveDialog(QDialog):
 
         self._build_ui()
         self._refresh()
+
+    # ── 窗口拖拽 ──────────────────────────────────────────
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if event.buttons() == Qt.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = QPoint()
+            event.accept()
+
+    # ── UI 构建 ────────────────────────────────────────────
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout()

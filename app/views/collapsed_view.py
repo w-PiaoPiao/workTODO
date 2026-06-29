@@ -22,6 +22,7 @@ class CollapsedView(QFrame):
 
     signal_expand_clicked = Signal()
     signal_quick_add_clicked = Signal()
+    signal_toggle_pin = Signal(bool)  # 置顶切换
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -58,6 +59,15 @@ class CollapsedView(QFrame):
         self._quick_add_btn.setStyleSheet(self._btn_style())
         self._quick_add_btn.clicked.connect(self.signal_quick_add_clicked.emit)
 
+        # 置顶切换按钮
+        self._pin_btn = QPushButton("📌")
+        self._pin_btn.setFixedSize(28, 28)
+        self._pin_btn.setToolTip("窗口置顶（点击切换）")
+        self._pin_btn.setCheckable(True)
+        self._pin_btn.setChecked(True)
+        self._pin_btn.setStyleSheet(self._pin_btn_style())
+        self._pin_btn.toggled.connect(self.signal_toggle_pin.emit)
+
         # 展开按钮
         self._expand_btn = QPushButton("⤢")
         self._expand_btn.setFixedSize(28, 28)
@@ -70,6 +80,7 @@ class CollapsedView(QFrame):
         layout.addWidget(self._count_label)
         layout.addWidget(spacer)
         layout.addWidget(self._quick_add_btn)
+        layout.addWidget(self._pin_btn)
         layout.addWidget(self._expand_btn)
 
         self.setLayout(layout)
@@ -84,6 +95,10 @@ class CollapsedView(QFrame):
             self._count_label.setText("99+ 项待办")
         else:
             self._count_label.setText(f"{count} 项待办")
+
+    def set_pinned(self, pinned: bool) -> None:
+        """同步置顶按钮状态（由控制器调用）"""
+        self._pin_btn.setChecked(pinned)
 
     # ── 样式 ──────────────────────────────────────────────
 
@@ -111,5 +126,27 @@ class CollapsedView(QFrame):
             QPushButton:hover {{
                 background: {C["bg_hover"]};
                 color: {C["accent"]};
+            }}
+        """
+
+    @staticmethod
+    def _pin_btn_style() -> str:
+        C = AppTheme.C
+        return f"""
+            QPushButton {{
+                font-size: 13px;
+                color: {C["accent"]};
+                border-radius: 4px;
+                padding: 2px;
+                background: transparent;
+            }}
+            QPushButton:hover {{
+                background: {C["bg_hover"]};
+            }}
+            QPushButton:checked {{
+                color: {C["accent"]};
+            }}
+            QPushButton:!checked {{
+                color: {C["text_disabled"]};
             }}
         """

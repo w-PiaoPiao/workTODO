@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtCore import QObject, Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer, QSettings
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QMessageBox, QInputDialog,
 )
@@ -55,6 +55,9 @@ class AppController(QObject):
 
         # ── 显示窗口 ──────────────────────────────────
         self._window.show()
+
+        # ── 恢复窗口状态（置顶、位置等）───────────────
+        self._restore_window_state()
 
     # ── 公共访问 ──────────────────────────────────────────
 
@@ -113,6 +116,10 @@ class AppController(QObject):
 
         # 主窗口
         self._window.signal_close_requested.connect(self._on_close_requested)
+
+        # 置顶切换（两个视图同步）
+        self._collapsed_view.signal_toggle_pin.connect(self._on_toggle_pin)
+        self._expanded_view.signal_toggle_pin.connect(self._on_toggle_pin)
 
     # ── 核心业务逻辑 ──────────────────────────────────────
 
@@ -285,6 +292,25 @@ class AppController(QObject):
         """退出应用"""
         self._tray_icon.hide()
         QApplication.quit()
+
+    # ── 窗口状态管理 ──────────────────────────────────────
+
+    def _restore_window_state(self) -> None:
+        """恢复窗口置顶状态并同步按钮"""
+        settings = QSettings("Personal", "待办事项和便签")
+        pinned = settings.value("window/pinned", True, type=bool)
+        self._window.set_always_on_top(pinned)
+        self._collapsed_view.set_pinned(pinned)
+        self._expanded_view.set_pinned(pinned)
+
+    def _on_toggle_pin(self, pinned: bool) -> None:
+        """切换窗口置顶并同步所有视图的按钮状态"""
+        self._window.set_always_on_top(pinned)
+        self._collapsed_view.set_pinned(pinned)
+        self._expanded_view.set_pinned(pinned)
+        # 持久化
+        settings = QSettings("Personal", "待办事项和便签")
+        settings.setValue("window/pinned", pinned)
 
     # ── 通知 ──────────────────────────────────────────────
 

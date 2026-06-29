@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, Signal, QPoint, QSize
+from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, Signal, QPoint, QSize, QSettings
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget, QApplication
 from PySide6.QtGui import QMouseEvent, QScreen
 
@@ -145,6 +145,7 @@ class MainWindow(QWidget):
         if event.button() == Qt.LeftButton:
             self._is_dragging = False
             self._snap_to_screen_edge()
+            self._save_position()
             event.accept()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
@@ -191,13 +192,43 @@ class MainWindow(QWidget):
         self.setFixedSize(self._collapsed_size)
 
     def _move_to_default_position(self) -> None:
-        """默认放在屏幕右上角"""
+        """恢复上次位置或置于屏幕右上角"""
+        # 先尝试恢复已保存的位置
+        if self._restore_position():
+            return
+        # 无已保存位置 → 默认右上角
         screen = QApplication.primaryScreen()
         if screen:
             geometry = screen.availableGeometry()
             x = geometry.right() - self._collapsed_size.width() - AppConfig.SCREEN_MARGIN
             y = geometry.top() + AppConfig.SCREEN_MARGIN
             self.move(x, y)
+
+    def _save_position(self) -> None:
+        """保存窗口位置到 QSettings"""
+        settings = QSettings("Personal", "待办事项和便签")
+        settings.setValue("window/pos", self.pos())
+
+    def _restore_position(self) -> bool:
+        """从 QSettings 恢复窗口位置，成功返回 True"""
+        settings = QSettings("Personal", "待办事项和便签")
+        pos = settings.value("window/pos")
+        if pos is not None and isinstance(pos, QPoint):
+            self.move(pos)
+            return True
+        return False
+
+    def set_always_on_top(self, enabled: bool) -> None:
+        """切换窗口是否置顶（需 hide/show 刷新窗口标志）"""
+        visible = self.isVisible()
+        flags = self.windowFlags()
+        if enabled:
+            flags |= Qt.WindowStaysOnTopHint
+        else:
+            flags &= ~Qt.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
+        if visible:
+            self.show()
 
     def _snap_to_screen_edge(self) -> None:
         """确保窗口不超出屏幕边界"""
@@ -216,6 +247,8 @@ class MainWindow(QWidget):
             self.move(new_x, new_y)
 
     def closeEvent(self, event):
-        # 关闭时发射信号，让控制器决定是退出还是最小化到托盘
+        # 关闭时保存位置
+        self._save_position()
+        # 发射信号，让控制器决定是退出还是最小化到托盘
         self.signal_close_requested.emit()
         event.ignore()  # 不真正关闭，由控制器处理
