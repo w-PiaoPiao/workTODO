@@ -31,6 +31,7 @@ class ExpandedView(QFrame):
     signal_progress_added = Signal(str, str)  # item_id, text
     signal_search_changed = Signal(str)  # query
     signal_archive_view_requested = Signal()
+    signal_quit_requested = Signal()  # 退出应用
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -118,10 +119,29 @@ class ExpandedView(QFrame):
         collapse_btn.setStyleSheet(self._icon_btn_style())
         collapse_btn.clicked.connect(self.signal_collapse_clicked.emit)
 
+        # 退出按钮
+        quit_btn = QPushButton("✕")
+        quit_btn.setFixedSize(28, 28)
+        quit_btn.setToolTip("退出")
+        quit_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 14px;
+                color: {AppTheme.C["text_disabled"]};
+                border-radius: 4px;
+                padding: 2px;
+                background: transparent;
+            }}
+            QPushButton:hover {{
+                background: {AppTheme.C["danger"]}; color: white;
+            }}
+        """)
+        quit_btn.clicked.connect(self.signal_quit_requested.emit)
+
         layout.addWidget(title)
         layout.addWidget(spacer)
         layout.addWidget(self._search_btn)
         layout.addWidget(collapse_btn)
+        layout.addWidget(quit_btn)
         bar.setLayout(layout)
         return bar
 

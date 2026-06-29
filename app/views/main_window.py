@@ -5,11 +5,13 @@
 - 无边框、始终置顶、可拖拽
 - 折叠/展开双模式切换（带动画）
 - 自动吸附屏幕边缘
+
+修复：展开时先解除固定尺寸再切换视图，防止黑条贯穿。
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, Signal, QPoint
+from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, Signal, QPoint, QSize
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget, QApplication
 from PySide6.QtGui import QMouseEvent, QScreen
 
@@ -60,8 +62,8 @@ class MainWindow(QWidget):
         self.setStyleSheet(AppTheme.global_qss())
 
         # ── 默认尺寸 ──────────────────────────────────────
-        self._collapsed_size = (AppConfig.COLLAPSED_WIDTH, AppConfig.COLLAPSED_HEIGHT)
-        self._expanded_size = (AppConfig.EXPANDED_WIDTH, AppConfig.EXPANDED_HEIGHT)
+        self._collapsed_size = QSize(AppConfig.COLLAPSED_WIDTH, AppConfig.COLLAPSED_HEIGHT)
+        self._expanded_size = QSize(AppConfig.EXPANDED_WIDTH, AppConfig.EXPANDED_HEIGHT)
 
         # ── 初始位置（右上角） ────────────────────────────
         self._move_to_default_position()
@@ -96,8 +98,11 @@ class MainWindow(QWidget):
         if self._mode == "expanded" or self._animation_running:
             return
         self._mode = "expanded"
+
+        # 关键修复：先解除固定尺寸，再切换视图，最后动画展开
+        self.setFixedSize(QSize(16777215, 16777215))
         self._stack.setCurrentWidget(self._expanded_view)
-        self._animate_size(*self._expanded_size)
+        self._animate_size(self._expanded_size.width(), self._expanded_size.height())
         self.signal_mode_changed.emit("expanded")
 
     def collapse(self) -> None:
@@ -105,8 +110,10 @@ class MainWindow(QWidget):
         if self._mode == "collapsed" or self._animation_running:
             return
         self._mode = "collapsed"
-        self._animate_size(*self._collapsed_size)
-        self._stack.setCurrentWidget(self._collapsed_view)
+
+        # 先动画缩小，动画结束后再切换视图并固定尺寸
+        self.setFixedSize(QSize(16777215, 16777215))
+        self._animate_size(self._collapsed_size.width(), self._collapsed_size.height())
         self.signal_mode_changed.emit("collapsed")
 
     # ── 窗口拖拽 ──────────────────────────────────────────
@@ -159,17 +166,24 @@ class MainWindow(QWidget):
     def _on_animation_finished(self) -> None:
         self._animation_running = False
 
+        # 动画结束后，应用固定尺寸防止布局抖动
+        if self._mode == "collapsed":
+            self._stack.setCurrentWidget(self._collapsed_view)
+            self.setFixedSize(self._collapsed_size)
+        else:
+            self.setFixedSize(self._expanded_size)
+
     # ── 窗口管理 ──────────────────────────────────────────
 
     def _apply_collapsed_size(self) -> None:
-        self.setFixedSize(*self._collapsed_size)
+        self.setFixedSize(self._collapsed_size)
 
     def _move_to_default_position(self) -> None:
         """默认放在屏幕右上角"""
         screen = QApplication.primaryScreen()
         if screen:
             geometry = screen.availableGeometry()
-            x = geometry.right() - self._collapsed_size[0] - AppConfig.SCREEN_MARGIN
+            x = geometry.right() - self._collapsed_size.width() - AppConfig.SCREEN_MARGIN
             y = geometry.top() + AppConfig.SCREEN_MARGIN
             self.move(x, y)
 

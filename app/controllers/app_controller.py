@@ -103,6 +103,7 @@ class AppController(QObject):
         self._expanded_view.signal_archive_view_requested.connect(
             self._on_show_archive
         )
+        self._expanded_view.signal_quit_requested.connect(self._on_quit)
 
         # 主窗口
         self._window.signal_close_requested.connect(self._on_close_requested)
