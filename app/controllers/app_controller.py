@@ -13,7 +13,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, QSettings
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QMessageBox, QInputDialog,
 )
-from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QColor, QFont
+from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QColor, QFont, QShortcut, QKeySequence
 
 from app.config import AppConfig
 from app.models.todo_item import TodoItem, ProgressEntry, StoreError
@@ -120,6 +120,14 @@ class AppController(QObject):
         # 置顶切换（两个视图同步）
         self._collapsed_view.signal_toggle_pin.connect(self._on_toggle_pin)
         self._expanded_view.signal_toggle_pin.connect(self._on_toggle_pin)
+
+        # ── 键盘快捷键 ──────────────────────────────────
+        self._setup_shortcuts()
+
+    def _setup_shortcuts(self) -> None:
+        """注册全局键盘快捷键"""
+        QShortcut(QKeySequence("Ctrl+N"), self._window, self._on_shortcut_new)
+        QShortcut(QKeySequence("Ctrl+F"), self._window, self._on_shortcut_search)
 
     # ── 核心业务逻辑 ──────────────────────────────────────
 
@@ -318,6 +326,23 @@ class AppController(QObject):
         """同步置顶按钮样式"""
         self._collapsed_view.set_pinned(self._pinned)
         self._expanded_view.set_pinned(self._pinned)
+
+    # ── 键盘快捷键 ──────────────────────────────────────
+
+    def _on_shortcut_new(self) -> None:
+        """Ctrl+N：新建待办"""
+        if self._window.mode == "expanded":
+            self._expanded_view.focus_add_input()
+        else:
+            self._on_quick_add_collapsed()
+
+    def _on_shortcut_search(self) -> None:
+        """Ctrl+F：搜索"""
+        if self._window.mode == "expanded":
+            self._expanded_view.focus_search()
+        else:
+            self._window.expand()
+            self._expanded_view.focus_search()
 
     # ── 通知 ──────────────────────────────────────────────
 

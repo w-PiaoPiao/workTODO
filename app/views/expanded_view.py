@@ -165,6 +165,19 @@ class ExpandedView(QFrame):
 
     # ── 搜索栏 ──────────────────────────────────────────────
 
+    def focus_add_input(self) -> None:
+        """聚焦快速添加输入框"""
+        self._add_input.setFocus()
+        self._add_input.selectAll()
+
+    def focus_search(self) -> None:
+        """打开并聚焦搜索栏"""
+        if not self._search_active:
+            self._toggle_search()
+        else:
+            self._search_bar.setFocus()
+            self._search_bar.selectAll()
+
     def _toggle_search(self) -> None:
         """切换搜索栏显示"""
         self._search_active = not self._search_active
