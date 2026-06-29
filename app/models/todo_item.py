@@ -86,6 +86,7 @@ class TodoItem:
     created_at: str = field(default_factory=_now_iso)
     completed_at: Optional[str] = None
     progress: list[ProgressEntry] = field(default_factory=list)
+    sticky: bool = False  # 是否置顶
 
     # ── 属性 ──────────────────────────────────────────────
 
@@ -130,6 +131,7 @@ class TodoItem:
             "created_at": self.created_at,
             "completed_at": self.completed_at,
             "progress": [p.to_dict() for p in self.progress],
+            "sticky": self.sticky,
         }
 
     @classmethod
@@ -144,4 +146,5 @@ class TodoItem:
                 ProgressEntry.from_dict(p)
                 for p in data.get("progress", [])
             ],
+            sticky=data.get("sticky", False),
         )

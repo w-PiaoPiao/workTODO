@@ -116,6 +116,7 @@ class AppController(QObject):
             self._on_show_archive
         )
         self._expanded_view.signal_quit_requested.connect(self._on_quit)
+        self._expanded_view.signal_sticky_toggled.connect(self._on_toggle_sticky)
 
         # 主窗口
         self._window.signal_close_requested.connect(self._on_close_requested)
@@ -236,6 +237,17 @@ class AppController(QObject):
                 self._show_notification(f"已恢复：{restored.title[:20]}")
         except StoreError as e:
             self._show_error(f"恢复失败: {e}")
+
+    def _on_toggle_sticky(self, item_id: str) -> None:
+        """切换待办置顶状态"""
+        item = next((t for t in self._todos if t.id == item_id), None)
+        if item:
+            item.sticky = not item.sticky
+            try:
+                self._store.update_item(item)
+                self._refresh_views()
+            except StoreError as e:
+                self._show_error(f"置顶切换失败: {e}")
 
     def _on_quick_add_collapsed(self) -> None:
         """在折叠模式下快速添加"""

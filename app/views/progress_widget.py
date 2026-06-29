@@ -126,6 +126,7 @@ class ProgressWidget(QWidget):
             background: transparent;
         """)
         text_label.setWordWrap(True)
+        text_label.setMinimumWidth(0)
         text_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         layout.addWidget(time_label)

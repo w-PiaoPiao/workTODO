@@ -33,6 +33,7 @@ class ExpandedView(QFrame):
     signal_archive_view_requested = Signal()
     signal_quit_requested = Signal()  # 退出应用
     signal_toggle_pin = Signal()  # 置顶切换（无参数，控制器管理状态）
+    signal_sticky_toggled = Signal(str)  # 待办置顶切换（item_id）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -136,30 +137,11 @@ class ExpandedView(QFrame):
         collapse_btn.setStyleSheet(self._icon_btn_style())
         collapse_btn.clicked.connect(self.signal_collapse_clicked.emit)
 
-        # 退出按钮
-        quit_btn = QPushButton("✕")
-        quit_btn.setFixedSize(28, 28)
-        quit_btn.setToolTip("退出")
-        quit_btn.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 14px;
-                color: {AppTheme.C["text_disabled"]};
-                border-radius: 4px;
-                padding: 2px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: {AppTheme.C["danger"]}; color: white;
-            }}
-        """)
-        quit_btn.clicked.connect(self.signal_quit_requested.emit)
-
         layout.addWidget(title)
         layout.addWidget(spacer)
         layout.addWidget(self._search_btn)
         layout.addWidget(self._pin_btn)
         layout.addWidget(collapse_btn)
-        layout.addWidget(quit_btn)
         bar.setLayout(layout)
         return bar
 
@@ -294,6 +276,9 @@ class ExpandedView(QFrame):
             self._show_empty_state()
             return
 
+        # 置顶项排前面
+        active.sort(key=lambda i: (not i.sticky, i.created_at), reverse=False)
+
         # 如果搜索激活，进一步过滤
         if self._search_query:
             q = self._search_query.lower()
@@ -314,6 +299,7 @@ class ExpandedView(QFrame):
             card.signal_completed.connect(self.signal_item_completed.emit)
             card.signal_deleted.connect(self.signal_item_deleted.emit)
             card.signal_progress_added.connect(self.signal_progress_added.emit)
+            card.signal_sticky_toggled.connect(self.signal_sticky_toggled.emit)
             self._list_layout.insertWidget(self._list_layout.count() - 1, card)
 
     def _clear_list(self) -> None:
@@ -354,7 +340,7 @@ class ExpandedView(QFrame):
 
     def _make_footer(self) -> QWidget:
         footer = QWidget()
-        footer.setFixedHeight(36)
+        footer.setFixedHeight(40)
         footer.setStyleSheet(f"""
             background: {AppTheme.C["bg_primary"]};
             border-top: 1px solid {AppTheme.C["border"]};
@@ -363,7 +349,7 @@ class ExpandedView(QFrame):
         """)
 
         layout = QHBoxLayout()
-        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setContentsMargins(12, 0, 4, 0)
 
         self._archive_btn = QPushButton("📦 查看归档")
         self._archive_btn.setStyleSheet(self._footer_btn_style())
@@ -380,9 +366,27 @@ class ExpandedView(QFrame):
             background: transparent;
         """)
 
+        # 退出按钮
+        quit_btn = QPushButton("✕  退出")
+        quit_btn.setFixedHeight(26)
+        quit_btn.setStyleSheet(f"""
+            QPushButton {{
+                font: {AppTheme.FONT["small"]};
+                color: {AppTheme.C["text_disabled"]};
+                border-radius: 4px;
+                padding: 2px 8px;
+                background: transparent;
+            }}
+            QPushButton:hover {{
+                background: {AppTheme.C["danger"]}; color: white;
+            }}
+        """)
+        quit_btn.clicked.connect(self.signal_quit_requested.emit)
+
         layout.addWidget(self._archive_btn)
         layout.addWidget(spacer)
         layout.addWidget(self._stats_label)
+        layout.addWidget(quit_btn)
         footer.setLayout(layout)
         return footer
 

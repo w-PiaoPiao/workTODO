@@ -28,6 +28,7 @@ class TodoCard(QFrame):
     signal_completed = Signal(str)  # item_id
     signal_deleted = Signal(str)  # item_id
     signal_progress_added = Signal(str, str)  # item_id, text
+    signal_sticky_toggled = Signal(str)  # item_id
 
     def __init__(self, item: TodoItem, parent=None):
         super().__init__(parent)
@@ -46,15 +47,9 @@ class TodoCard(QFrame):
         main_layout.setContentsMargins(10, 8, 10, 8)
         main_layout.setSpacing(4)
 
-        # ── 顶行：复选框 + 标题 + 操作按钮 ────────────────
+        # ── 顶行：标题 + 操作按钮 ────────────────────────────
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
-
-        self._check_btn = QPushButton("☐")
-        self._check_btn.setFixedSize(24, 24)
-        self._check_btn.setToolTip("办结")
-        self._check_btn.setStyleSheet(self._check_btn_style(False))
-        self._check_btn.clicked.connect(self._on_complete)
 
         self._title_label = QLabel()
         self._title_label.setStyleSheet(f"""
@@ -64,10 +59,17 @@ class TodoCard(QFrame):
             padding: 2px 0;
         """)
         self._title_label.setWordWrap(True)
+        self._title_label.setMinimumWidth(0)
         self._title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         # 双击标题进入编辑模式
         self._title_label.mouseDoubleClickEvent = self._start_edit
+
+        self._sticky_btn = QPushButton("↑")
+        self._sticky_btn.setFixedSize(24, 24)
+        self._sticky_btn.setToolTip("置顶")
+        self._sticky_btn.setStyleSheet(self._sticky_btn_style(False))
+        self._sticky_btn.clicked.connect(self._on_toggle_sticky)
 
         self._complete_btn = QPushButton("办结")
         self._complete_btn.setFixedSize(40, 24)
@@ -81,8 +83,8 @@ class TodoCard(QFrame):
         self._delete_btn.setStyleSheet(self._delete_btn_style())
         self._delete_btn.clicked.connect(self._on_delete)
 
-        top_row.addWidget(self._check_btn)
         top_row.addWidget(self._title_label, stretch=1)
+        top_row.addWidget(self._sticky_btn)
         top_row.addWidget(self._complete_btn)
         top_row.addWidget(self._delete_btn)
 
@@ -95,7 +97,7 @@ class TodoCard(QFrame):
         # ── 添加进度行 ────────────────────────────────────
         progress_row = QHBoxLayout()
         progress_row.setSpacing(4)
-        progress_row.setContentsMargins(28, 0, 0, 0)  # 缩进对齐
+        progress_row.setContentsMargins(0, 0, 0, 0)  # 无复选框，取消缩进
 
         self._progress_input = QLineEdit()
         self._progress_input.setPlaceholderText("添加进度...")
@@ -141,8 +143,6 @@ class TodoCard(QFrame):
         self._item = item
 
         if item.is_completed:
-            self._check_btn.setText("☑")
-            self._check_btn.setStyleSheet(self._check_btn_style(True))
             self._title_label.setStyleSheet(f"""
                 font: {AppTheme.FONT["body"]};
                 color: {AppTheme.C["text_disabled"]};
@@ -153,12 +153,13 @@ class TodoCard(QFrame):
             self._complete_btn.setVisible(False)
             self._progress_input.setVisible(False)
             self._progress_btn.setVisible(False)
-        else:
-            self._check_btn.setText("☐")
-            self._check_btn.setStyleSheet(self._check_btn_style(False))
+            self._sticky_btn.setVisible(False)
 
         self._title_label.setText(item.title)
         self._title_label.setToolTip(item.title)
+
+        # 置顶状态
+        self._sticky_btn.setStyleSheet(self._sticky_btn_style(item.sticky))
 
         # 填充进度
         self._progress_widget.set_entries(item.progress)
@@ -170,6 +171,11 @@ class TodoCard(QFrame):
 
     def _on_delete(self) -> None:
         self.signal_deleted.emit(self._item.id)
+
+    def _on_toggle_sticky(self) -> None:
+        self._item.sticky = not self._item.sticky
+        self._sticky_btn.setStyleSheet(self._sticky_btn_style(self._item.sticky))
+        self.signal_sticky_toggled.emit(self._item.id)
 
     def _on_progress_submit(self) -> None:
         text = self._progress_input.text().strip()
@@ -231,12 +237,12 @@ class TodoCard(QFrame):
     # ── 样式 ──────────────────────────────────────────────
 
     @staticmethod
-    def _check_btn_style(completed: bool) -> str:
+    def _sticky_btn_style(sticky: bool) -> str:
         C = AppTheme.C
-        color = C["success"] if completed else C["text_secondary"]
+        color = C["accent"] if sticky else C["text_disabled"]
         return f"""
             QPushButton {{
-                font-size: 18px;
+                font-size: 14px;
                 color: {color};
                 border: none;
                 padding: 0;

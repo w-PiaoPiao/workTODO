@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, Signal, QPoint, QSize, QSettings
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget, QApplication
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget, QApplication, QSizeGrip
 from PySide6.QtGui import QMouseEvent, QScreen
 
 from app.config import AppConfig
@@ -56,6 +56,12 @@ class MainWindow(QWidget):
         layout.addWidget(self._stack)
         self.setLayout(layout)
 
+        # ── 大小缩放控件（用于展开模式）──────────────────
+        self._size_grip = QSizeGrip(self)
+        self._size_grip.setFixedSize(16, 16)
+        self._size_grip.setStyleSheet("background: transparent;")
+        self._size_grip.setVisible(False)
+
         # ── 应用全局样式 ──────────────────────────────────
         self.setStyleSheet(AppTheme.global_qss())
 
@@ -97,9 +103,12 @@ class MainWindow(QWidget):
             return
         self._mode = "expanded"
 
-        # 关键修复：先解除固定尺寸，再切换视图，最后动画展开
+        # 先解除固定尺寸，再切换视图，最后动画展开
         self.setFixedSize(QSize(16777215, 16777215))
+        self.setMinimumSize(AppConfig.EXPANDED_MIN_WIDTH, AppConfig.EXPANDED_MIN_HEIGHT)
+        self.setMaximumSize(AppConfig.EXPANDED_MAX_WIDTH, AppConfig.EXPANDED_MAX_HEIGHT)
         self._stack.setCurrentWidget(self._expanded_view)
+        self._size_grip.setVisible(True)
         self._animate_size(self._expanded_size.width(), self._expanded_size.height())
         self.signal_mode_changed.emit("expanded")
 
@@ -110,7 +119,10 @@ class MainWindow(QWidget):
         self._mode = "collapsed"
 
         # 先动画缩小，动画结束后再切换视图并固定尺寸
+        self.setMaximumSize(16777215, 16777215)
+        self.setMinimumSize(0, 0)
         self.setFixedSize(QSize(16777215, 16777215))
+        self._size_grip.setVisible(False)
         self._animate_size(self._collapsed_size.width(), self._collapsed_size.height())
         self.signal_mode_changed.emit("collapsed")
 
@@ -165,12 +177,11 @@ class MainWindow(QWidget):
     def _on_animation_finished(self) -> None:
         self._animation_running = False
 
-        # 动画结束后，应用固定尺寸防止布局抖动
+        # 动画结束后，应用尺寸约束
         if self._mode == "collapsed":
             self._stack.setCurrentWidget(self._collapsed_view)
             self.setFixedSize(self._collapsed_size)
-        else:
-            self.setFixedSize(self._expanded_size)
+        # 展开模式不锁固定尺寸，允许用户拖拽缩放
 
     # ── 窗口管理 ──────────────────────────────────────────
 
