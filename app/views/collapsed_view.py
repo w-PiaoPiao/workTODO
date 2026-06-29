@@ -22,7 +22,7 @@ class CollapsedView(QFrame):
 
     signal_expand_clicked = Signal()
     signal_quick_add_clicked = Signal()
-    signal_toggle_pin = Signal(bool)  # 置顶切换
+    signal_toggle_pin = Signal()  # 置顶切换（无参数，控制器管理状态）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -62,11 +62,9 @@ class CollapsedView(QFrame):
         # 置顶切换按钮
         self._pin_btn = QPushButton("📌")
         self._pin_btn.setFixedSize(28, 28)
-        self._pin_btn.setToolTip("窗口置顶（点击切换）")
-        self._pin_btn.setCheckable(True)
-        self._pin_btn.setChecked(True)
-        self._pin_btn.setStyleSheet(self._pin_btn_style())
-        self._pin_btn.toggled.connect(self.signal_toggle_pin.emit)
+        self._pin_btn.setToolTip("点击切换置顶")
+        self._pin_btn.setStyleSheet(self._pin_btn_style(True))
+        self._pin_btn.clicked.connect(self.signal_toggle_pin.emit)
 
         # 展开按钮
         self._expand_btn = QPushButton("⤢")
@@ -97,8 +95,10 @@ class CollapsedView(QFrame):
             self._count_label.setText(f"{count} 项待办")
 
     def set_pinned(self, pinned: bool) -> None:
-        """同步置顶按钮状态（由控制器调用）"""
-        self._pin_btn.setChecked(pinned)
+        """同步置顶按钮样式（由控制器调用）"""
+        self._pin_btn.setText("📌" if pinned else "📍")
+        self._pin_btn.setStyleSheet(self._pin_btn_style(pinned))
+        self._pin_btn.setToolTip("点击取消置顶" if pinned else "点击置顶")
 
     # ── 样式 ──────────────────────────────────────────────
 
@@ -130,20 +130,20 @@ class CollapsedView(QFrame):
         """
 
     @staticmethod
-    def _pin_btn_style() -> str:
+    def _pin_btn_style(pinned: bool = True) -> str:
         C = AppTheme.C
+        color = C["danger"] if pinned else C["text_disabled"]
+        hov_color = C["danger"] if pinned else C["text_secondary"]
         return f"""
             QPushButton {{
                 font-size: 13px;
-                color: {C["text_disabled"]};
+                color: {color};
                 border-radius: 4px;
                 padding: 2px;
                 background: transparent;
             }}
             QPushButton:hover {{
                 background: {C["bg_hover"]};
-            }}
-            QPushButton:checked {{
-                color: {C["danger"]};
+                color: {hov_color};
             }}
         """

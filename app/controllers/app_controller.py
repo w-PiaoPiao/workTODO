@@ -300,20 +300,24 @@ class AppController(QObject):
 
     def _restore_window_state(self) -> None:
         """恢复窗口置顶状态并同步按钮"""
+        self._pinned = True  # 默认置顶
         settings = QSettings("Personal", "待办事项和便签")
-        pinned = settings.value("window/pinned", True, type=bool)
-        self._window.set_always_on_top(pinned)
-        self._collapsed_view.set_pinned(pinned)
-        self._expanded_view.set_pinned(pinned)
+        self._pinned = settings.value("window/pinned", True, type=bool)
+        self._sync_pin_state()
 
-    def _on_toggle_pin(self, pinned: bool) -> None:
-        """切换窗口置顶并同步所有视图的按钮状态"""
-        self._window.set_always_on_top(pinned)
-        self._collapsed_view.set_pinned(pinned)
-        self._expanded_view.set_pinned(pinned)
+    def _on_toggle_pin(self) -> None:
+        """切换窗口置顶并同步所有视图"""
+        self._pinned = not self._pinned
+        self._window.set_always_on_top(self._pinned)
+        self._sync_pin_state()
         # 持久化
         settings = QSettings("Personal", "待办事项和便签")
-        settings.setValue("window/pinned", pinned)
+        settings.setValue("window/pinned", self._pinned)
+
+    def _sync_pin_state(self) -> None:
+        """同步置顶按钮样式"""
+        self._collapsed_view.set_pinned(self._pinned)
+        self._expanded_view.set_pinned(self._pinned)
 
     # ── 通知 ──────────────────────────────────────────────
 
