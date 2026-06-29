@@ -93,7 +93,7 @@ class CollapsedView(QFrame):
             CollapsedView {{
                 background: {C["bg_primary"]};
                 border: 1px solid {C["border"]};
-                border-radius: 6px;
+                border-radius: 8px;
             }}
         """
 

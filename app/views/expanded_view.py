@@ -43,6 +43,15 @@ class ExpandedView(QFrame):
         self._build_ui()
 
     def _build_ui(self) -> None:
+        # ── 自身样式 ──────────────────────────────────────
+        self.setStyleSheet(f"""
+            ExpandedView {{
+                background: {AppTheme.C["bg_primary"]};
+                border: 1px solid {AppTheme.C["border"]};
+                border-radius: 8px;
+            }}
+        """)
+
         # ── 主布局 ────────────────────────────────────────
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -327,6 +336,8 @@ class ExpandedView(QFrame):
         footer.setStyleSheet(f"""
             background: {AppTheme.C["bg_primary"]};
             border-top: 1px solid {AppTheme.C["border"]};
+            border-bottom-left-radius: 8px;
+            border-bottom-right-radius: 8px;
         """)
 
         layout = QHBoxLayout()
