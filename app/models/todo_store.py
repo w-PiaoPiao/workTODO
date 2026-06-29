@@ -124,6 +124,36 @@ class TodoStore:
             "total_count": len(todos),
         }
 
+    def auto_archive_old(self, days: int = 30) -> int:
+        """自动归档超过指定天数的活跃待办，返回归档数量"""
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone(timedelta(hours=8), "CST"))
+        cutoff = now - timedelta(days=days)
+
+        todos = self.load_todos()
+        old: list[TodoItem] = []
+        keep: list[TodoItem] = []
+        for item in todos:
+            try:
+                created = datetime.fromisoformat(item.created_at)
+                if item.is_active and created < cutoff:
+                    item.status = "archived"
+                    old.append(item)
+                else:
+                    keep.append(item)
+            except (ValueError, TypeError):
+                keep.append(item)
+
+        if not old:
+            return 0
+
+        self.save_todos(keep)
+        archived = self.load_archived()
+        archived.extend(old)
+        self.save_archived(archived)
+        logger.info("自动归档 %d 条超过 %d 天的待办", len(old), days)
+        return len(old)
+
     # ── 内部实现 ──────────────────────────────────────────
 
     def _load_items(self, path: Path) -> list[TodoItem]:

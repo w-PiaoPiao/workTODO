@@ -70,6 +70,9 @@ class AppController(QObject):
     def _load_data(self) -> None:
         """加载数据并刷新视图"""
         try:
+            # 自动归档超过 30 天的旧项目
+            self._store.auto_archive_old(AppConfig.AUTO_ARCHIVE_DAYS)
+
             self._todos = self._store.load_todos()
             self._archived = self._store.load_archived()
         except StoreError as e:
