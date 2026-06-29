@@ -5,7 +5,7 @@
 - 无边框、始终置顶、可拖拽
 - 折叠/展开双模式切换（带动画）
 - 自动吸附屏幕边缘
-- 窗口阴影美化（QGraphicsDropShadowEffect）
+- 位置持久化（QSettings）
 """
 
 from __future__ import annotations
@@ -21,9 +21,6 @@ from app.views.theme import AppTheme
 class MainWindow(QWidget):
     """无边框置顶主窗口"""
 
-    # 阴影边距（为窗口阴影留出空间，值需 ≥ blur radius）
-    SHADOW_MARGIN = 15
-
     # ── 外部信号 ──────────────────────────────────────────
     signal_mode_changed = Signal(str)  # "collapsed" | "expanded"
     signal_close_requested = Signal()
@@ -37,8 +34,6 @@ class MainWindow(QWidget):
             | Qt.WindowStaysOnTopHint
             | Qt.Tool  # 不在任务栏显示
         )
-        # 启用透明背景，以便 QGraphicsDropShadowEffect 投射的阴影穿透显示
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, False)
 
         # ── 状态 ──────────────────────────────────────────
@@ -55,10 +50,8 @@ class MainWindow(QWidget):
         self._stack = QStackedWidget()
         self._stack.setCurrentIndex(0)
 
-        # 主布局（为阴影留边距）
-        sm = self.SHADOW_MARGIN
         layout = QVBoxLayout()
-        layout.setContentsMargins(sm, sm, sm, sm)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self._stack)
         self.setLayout(layout)
@@ -66,16 +59,9 @@ class MainWindow(QWidget):
         # ── 应用全局样式 ──────────────────────────────────
         self.setStyleSheet(AppTheme.global_qss())
 
-        # ── 默认尺寸（含阴影边距） ────────────────────────
-        sm = self.SHADOW_MARGIN
-        self._collapsed_size = QSize(
-            AppConfig.COLLAPSED_WIDTH + 2 * sm,
-            AppConfig.COLLAPSED_HEIGHT + 2 * sm,
-        )
-        self._expanded_size = QSize(
-            AppConfig.EXPANDED_WIDTH + 2 * sm,
-            AppConfig.EXPANDED_HEIGHT + 2 * sm,
-        )
+        # ── 默认尺寸 ──────────────────────────────────────
+        self._collapsed_size = QSize(AppConfig.COLLAPSED_WIDTH, AppConfig.COLLAPSED_HEIGHT)
+        self._expanded_size = QSize(AppConfig.EXPANDED_WIDTH, AppConfig.EXPANDED_HEIGHT)
 
         # ── 初始位置（右上角） ────────────────────────────
         self._move_to_default_position()
@@ -221,6 +207,7 @@ class MainWindow(QWidget):
     def set_always_on_top(self, enabled: bool) -> None:
         """切换窗口是否置顶（需 hide/show 刷新窗口标志）"""
         visible = self.isVisible()
+        self.hide()
         flags = self.windowFlags()
         if enabled:
             flags |= Qt.WindowStaysOnTopHint
@@ -229,6 +216,7 @@ class MainWindow(QWidget):
         self.setWindowFlags(flags)
         if visible:
             self.show()
+            self.raise_()
 
     def _snap_to_screen_edge(self) -> None:
         """确保窗口不超出屏幕边界"""

@@ -13,7 +13,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, QSettings
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QMessageBox, QInputDialog,
 )
-from PySide6.QtGui import QIcon, QAction
+from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QColor, QFont
 
 from app.config import AppConfig
 from app.models.todo_item import TodoItem, ProgressEntry, StoreError
@@ -241,15 +241,18 @@ class AppController(QObject):
     def _setup_tray(self) -> None:
         """初始化系统托盘"""
         self._tray_icon = QSystemTrayIcon(self._window)
-        # 使用内置图标
-        icon = QIcon.fromTheme("edit-paste")
-        if icon.isNull():
-            # 创建一个简单图标
-            icon = QIcon()
-            pixmap = QApplication.style().standardPixmap(
-                getattr(QApplication.style().__class__, None, None)
-            )
-        self._tray_icon.setIcon(self._window.windowIcon() if not icon.isNull() else icon)
+
+        # 手绘一个 📋 图标（Windows 没有主题图标）
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        # 蓝色圆形背景
+        painter.setBrush(QColor("#0078D4"))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(1, 1, 30, 30, 6, 6)
+        painter.end()
+        self._tray_icon.setIcon(QIcon(pixmap))
         self._tray_icon.setToolTip("待办事项和便签")
 
         # 右键菜单

@@ -39,15 +39,6 @@ def main():
 
     controller = AppController()
 
-    # ── 窗口阴影（必须在窗口 show() 之后应用，避开 PySide6 模块内 bug）─
-    from PySide6.QtWidgets import QGraphicsDropShadowEffect
-    from PySide6.QtGui import QColor
-    shadow = QGraphicsDropShadowEffect()
-    shadow.setBlurRadius(15)
-    shadow.setOffset(0, 4)
-    shadow.setColor(QColor(0, 0, 0, 80))
-    controller.window().setGraphicsEffect(shadow)
-
     sys.exit(app.exec())
 
 
