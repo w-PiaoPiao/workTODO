@@ -108,6 +108,26 @@ class AppTheme:
                 font-size: 10pt;
                 max-width: 400px;
             }}
+
+            /* 对话框 */
+            QMessageBox {{
+                background: {C["bg_card"]};
+            }}
+            QMessageBox QLabel {{
+                color: {C["text_primary"]};
+                background: transparent;
+            }}
+            QMessageBox QPushButton {{
+                min-width: 80px;
+                padding: 6px 16px;
+                border: 1px solid {C["border"]};
+                border-radius: 4px;
+                background: {C["bg_card"]};
+                color: {C["text_primary"]};
+            }}
+            QMessageBox QPushButton:hover {{
+                background: {C["bg_hover"]};
+            }}
         """
 
     @classmethod
