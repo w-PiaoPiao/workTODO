@@ -1,3 +1,4 @@
 @echo off
-REM 带控制台模式的启动脚本（调试用）
+REM Start with console window (debug mode)
 python -X utf8 main.py %*
+pause
