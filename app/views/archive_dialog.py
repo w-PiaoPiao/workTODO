@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QMouseEvent
 from app.config import AppConfig
 from app.views.theme import AppTheme
+from app.views.elided_label import ElidedLabel
 from app.models.todo_item import TodoItem
 
 
@@ -236,7 +237,7 @@ class ArchiveDialog(QDialog):
         # 进度摘要
         if item.progress:
             for p in item.progress[-2:]:  # 最多显示 2 条
-                p_label = QLabel(f"  ·  {p.text}")
+                p_label = ElidedLabel(f"  ·  {p.text}")
                 p_label.setStyleSheet(f"""
                     font: {AppTheme.FONT["small"]};
                     color: {AppTheme.C["text_secondary"]};

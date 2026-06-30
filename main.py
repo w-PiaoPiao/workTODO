@@ -34,6 +34,25 @@ def main():
     # 高 DPI 支持
     app.setStyle("Fusion")
 
+    # ── 全局样式表（必须在 QApplication 级别，QToolTip 是顶层窗口，
+    #    不会继承 MainWindow 上的 setStyleSheet）─────────────────
+    from app.views.theme import AppTheme
+    app.setStyleSheet(AppTheme.global_qss())
+
+    # ── Windows 下 QSS background 无法控制 tooltip 实际渲染
+    #    （Windows 用 GDI 画 tooltip 窗口），必须通过 QPalette 角色设置 ──
+    from PySide6.QtGui import QPalette, QColor
+    palette = app.palette()
+    palette.setColor(QPalette.ToolTipBase, QColor("#FFFFFF"))
+    palette.setColor(QPalette.ToolTipText, QColor("#1A1A1A"))
+    app.setPalette(palette)
+
+    # ── 终极方案：自定义 tooltip ─────────────────────────
+    # 若 QApplication QSS + QPalette 仍无法覆盖 Windows 原生 tooltip 黑底，
+    # 则拦截所有 QEvent.ToolTip，用白底 QFrame 自己显示。
+    from app.views.custom_tooltip import install_custom_tooltip
+    install_custom_tooltip(app)
+
     # ── 启动控制器 ────────────────────────────────────────
     from app.controllers.app_controller import AppController
 

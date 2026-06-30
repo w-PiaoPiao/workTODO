@@ -11,14 +11,14 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Qt, QTimer
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QSizePolicy, QWidget,
+    QFrame, QVBoxLayout, QHBoxLayout, QPushButton,
+    QLineEdit, QWidget,
 )
-from PySide6.QtGui import QFontMetrics
 from app.config import AppConfig
 from app.views.theme import AppTheme
+from app.views.elided_label import ElidedLabel
 from app.models.todo_item import TodoItem, ProgressEntry
 from app.views.progress_widget import ProgressWidget
 
@@ -52,15 +52,14 @@ class TodoCard(QFrame):
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
 
-        self._title_label = QLabel()
+        self._title_label = ElidedLabel()
         self._title_label.setStyleSheet(f"""
             font: {AppTheme.FONT["body"]};
             color: {AppTheme.C["text_primary"]};
             background: transparent;
             padding: 2px 0;
         """)
-        self._title_label.setMinimumWidth(0)
-        self._title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        # ElidedLabel 已设置 Expanding + minimumWidth(0)
 
         # 双击标题进入编辑模式
         self._title_label.mouseDoubleClickEvent = self._start_edit
@@ -155,9 +154,7 @@ class TodoCard(QFrame):
             self._progress_btn.setVisible(False)
             self._sticky_btn.setVisible(False)
 
-        self._title_label.setText(item.title)
-        self._title_label.setToolTip(item.title)
-        QTimer.singleShot(0, self._elide_title)
+        self._title_label.setFullText(item.title)
 
         # 置顶状态
         self._sticky_btn.setStyleSheet(self._sticky_btn_style(item.sticky))
@@ -177,27 +174,7 @@ class TodoCard(QFrame):
         # 只发射信号，由控制器处理翻转和刷新
         self.signal_sticky_toggled.emit(self._item.id)
 
-    # ── 文字溢出省略 ──────────────────────────────────────
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._elide_title()
-
-    def _elide_title(self) -> None:
-        if not self._item or self._title_label.width() < 10:
-            return
-        # 可用宽度 = 卡片宽度 - 左右边距(20) - 按钮(24+40+24) - 间隔(3*8)
-        avail = self.width() - 132
-        if avail < 30:
-            avail = self._title_label.width()
-        # 物理约束标签宽度防止溢出
-        self._title_label.setMaximumWidth(avail)
-        fm = self._title_label.fontMetrics()
-        elided = fm.elidedText(
-            self._item.title, Qt.ElideRight, avail,
-        )
-        if elided != self._title_label.text():
-            self._title_label.setText(elided)
+    # ── 文字溢出省略（由 ElidedLabel 内部 paintEvent 处理）──
 
     def _on_progress_submit(self) -> None:
         text = self._progress_input.text().strip()
@@ -242,7 +219,7 @@ class TodoCard(QFrame):
         new_title = self._edit_input.text().strip()
         if new_title and new_title != self._item.title:
             self._item.title = new_title
-            self._title_label.setText(new_title)
+            self._title_label.setFullText(new_title)
 
         # 恢复标签显示
         self._title_label.show()
