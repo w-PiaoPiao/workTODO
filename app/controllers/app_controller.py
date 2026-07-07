@@ -303,10 +303,20 @@ class AppController(QObject):
         """接收拖放排序后的新顺序并持久化"""
         try:
             self._store.reorder_items(ordered_ids)
-            # reorder_items 内部已保存到磁盘，无需全量重读
-            # 只需按 ordered_ids 顺序重新排列 self._todos（保持已有对象引用）
+            # reorder_items 只更新了磁盘上新读取的对象的 position，
+            # 需要同步更新内存中 self._todos 对象的 position 值
             id_map = {t.id: t for t in self._todos}
-            self._todos = [id_map[i] for i in ordered_ids if i in id_map]
+            for idx, item_id in enumerate(ordered_ids):
+                if item_id in id_map:
+                    id_map[item_id].position = idx
+
+            # 保持 self._todos 中的全部条目（ordered_ids 仅含可见的活跃卡片，
+            # 不可见的已完成/已归档项不应丢失）
+            seen = set(ordered_ids)
+            reordered = [id_map[i] for i in ordered_ids if i in id_map]
+            reordered += [t for t in self._todos if t.id not in seen]
+            self._todos = reordered
+
             self._refresh_views()
         except StoreError as e:
             self._show_error(f"排序失败: {e}")
