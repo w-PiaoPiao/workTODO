@@ -14,7 +14,7 @@ class AppConfig:
 
     # 应用信息
     APP_NAME = "待办事项和便签"
-    APP_VERSION = "1.0.0"
+    APP_VERSION = "0.1.1"
 
     # ── 数据路径 ──────────────────────────────────────────────
     # 数据存储目录：优先使用环境变量覆盖，默认在用户数据目录下
@@ -64,7 +64,7 @@ class AppConfig:
     SEARCH_DEBOUNCE_MS = 300    # 搜索防抖毫秒
     NOTIFICATION_DURATION_MS = 2000  # 通知显示时长
 
-    # ── 颜色 ──────────────────────────────────────────────────
+    # ── 颜色（浅色） ──────────────────────────────────────────
     COLORS = {
         "bg_primary": "#F3F3F3",
         "bg_card": "#FFFFFF",
@@ -79,6 +79,23 @@ class AppConfig:
         "danger": "#D13438",
         "warning": "#FF8C00",
         "border": "#E0E0E0",
+    }
+
+    # ── 颜色（深色 / Windows 11 dark 风格） ─────────────────
+    DARK_COLORS = {
+        "bg_primary": "#1E1E1E",
+        "bg_card": "#2D2D2D",
+        "bg_hover": "#3D3D3D",
+        "bg_completed": "#262626",
+        "text_primary": "#E0E0E0",
+        "text_secondary": "#A0A0A0",
+        "text_disabled": "#666666",
+        "accent": "#60CDFF",
+        "accent_hover": "#4EC2F0",
+        "success": "#6CCB5F",
+        "danger": "#FF5F52",
+        "warning": "#FFB800",
+        "border": "#404040",
     }
 
     # ── 平台检测 ──────────────────────────────────────────────

@@ -3,6 +3,7 @@
 
 集中管理全局 QSS 样式表、颜色变量和字体配置。
 所有视图组件通过导入 AppTheme 获取样式常量。
+支持浅色/深色模式动态切换。
 """
 
 from app.config import AppConfig
@@ -11,7 +12,11 @@ from app.config import AppConfig
 class AppTheme:
     """应用主题定义"""
 
-    # ── 颜色（从配置读取，保持单源） ──────────────────────
+    # ── 当前主题模式 ──────────────────────────────────────
+    # "light" | "dark"
+    _current_theme = "light"
+
+    # ── 颜色（从配置读取，初始指向浅色方案） ──────────────
     C = AppConfig.COLORS
 
     # ── 字体 ──────────────────────────────────────────────
@@ -22,6 +27,28 @@ class AppTheme:
         "small": f"10pt '{FONT_FAMILY}'",
         "body_bold": f"12pt '{FONT_FAMILY}'",
     }
+
+    # ── 主题开关 ──────────────────────────────────────────
+
+    @classmethod
+    def switch_theme(cls, dark: bool) -> None:
+        """切换浅色/深色模式。dark=True → 深色"""
+        cls._current_theme = "dark" if dark else "light"
+        cls.C = AppConfig.DARK_COLORS if dark else AppConfig.COLORS
+
+    @classmethod
+    def is_dark(cls) -> bool:
+        """当前是否深色模式"""
+        return cls._current_theme == "dark"
+
+    @classmethod
+    def apply_palette(cls, app) -> None:
+        """将当前主题色应用到 QApplication palette（用于 tooltip 等）"""
+        from PySide6.QtGui import QPalette, QColor
+        palette = app.palette()
+        palette.setColor(QPalette.ToolTipBase, QColor(cls.C["bg_card"]))
+        palette.setColor(QPalette.ToolTipText, QColor(cls.C["text_primary"]))
+        app.setPalette(palette)
 
     # ── 全局样式表 ────────────────────────────────────────
 
@@ -172,5 +199,25 @@ class AppTheme:
             QPushButton:hover {{
                 color: {C["accent_hover"]};
                 text-decoration: underline;
+            }}
+        """
+
+    @classmethod
+    def pin_btn_style(cls, pinned: bool = True) -> str:
+        """置顶按钮样式（共用，避免跨视图重复）"""
+        C = cls.C
+        color = C["danger"] if pinned else C["text_disabled"]
+        hov_color = C["danger"] if pinned else C["text_secondary"]
+        return f"""
+            QPushButton {{
+                font-size: 13px;
+                color: {color};
+                border-radius: 4px;
+                padding: 2px;
+                background: transparent;
+            }}
+            QPushButton:hover {{
+                background: {C["bg_hover"]};
+                color: {hov_color};
             }}
         """

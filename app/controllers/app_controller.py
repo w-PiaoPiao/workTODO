@@ -8,20 +8,25 @@
 from __future__ import annotations
 
 import logging
+import sys
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QTimer, QSettings
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QMessageBox, QInputDialog,
 )
-from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QColor, QFont, QShortcut, QKeySequence
+from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QColor, QFont, QShortcut, QKeySequence, QPalette
 
 from app.config import AppConfig
 from app.models.todo_item import TodoItem, ProgressEntry, StoreError
 from app.models.todo_store import TodoStore
+from app.views.theme import AppTheme
 from app.views.main_window import MainWindow
 from app.views.collapsed_view import CollapsedView
 from app.views.expanded_view import ExpandedView
 from app.views.archive_dialog import ArchiveDialog
+from app.views.custom_tooltip import CustomTooltip
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +36,14 @@ class AppController(QObject):
 
     def __init__(self):
         super().__init__()
+
+        # ── 从持久化存储加载主题偏好 ──────────────────────
+        settings = QSettings("Personal", "待办事项和便签")
+        dark_theme = settings.value("theme/dark", False, type=bool)
+        AppTheme.switch_theme(dark_theme)
+        app = QApplication.instance()
+        app.setStyleSheet(AppTheme.global_qss())
+        AppTheme.apply_palette(app)
 
         # ── 数据层 ────────────────────────────────────────
         self._store = TodoStore()
@@ -52,6 +65,9 @@ class AppController(QObject):
 
         # ── 连接信号 ──────────────────────────────────────
         self._connect_signals()
+
+        # ── 开机自启状态（在信号连接之后，显示窗口之前） ──
+        self._init_autostart()
 
         # ── 显示窗口 ──────────────────────────────────
         self._window.show()
@@ -117,6 +133,10 @@ class AppController(QObject):
         )
         self._expanded_view.signal_quit_requested.connect(self._on_quit)
         self._expanded_view.signal_sticky_toggled.connect(self._on_toggle_sticky)
+        self._expanded_view.signal_reorder_items.connect(self._on_reorder_items)
+        self._expanded_view.signal_title_changed.connect(self._on_title_changed)
+        self._expanded_view.signal_theme_toggled.connect(self._on_toggle_theme)
+        self._expanded_view.signal_autostart_toggled.connect(self._on_toggle_autostart)
 
         # 主窗口
         self._window.signal_close_requested.connect(self._on_close_requested)
@@ -143,8 +163,8 @@ class AppController(QObject):
 
         item = TodoItem(title=title)
         try:
-            self._store.add_item(item)
-            self._todos = self._store.load_todos()
+            self._store.add_item(item)  # add_item 会修改 item.position（原地）
+            self._todos.append(item)
             self._refresh_views()
             # 展开模式下滚动到底部
             self._show_notification(f"已添加：{title[:20]}")
@@ -158,17 +178,19 @@ class AppController(QObject):
         if not item:
             return
 
-        from datetime import datetime, timezone, timedelta
         cst = timezone(timedelta(hours=8), "CST")
+        original_completed_at = item.completed_at
         item.completed_at = datetime.now(cst).isoformat(timespec="seconds")
 
         try:
             self._store.archive_item(item)
-            self._todos = self._store.load_todos()
-            self._archived = self._store.load_archived()
+            # 就地更新内存列表，避免全量重读
+            self._todos = [t for t in self._todos if t.id != item.id]
+            self._archived.append(item)
             self._refresh_views()
             self._show_notification("已办结 ✓")
         except StoreError as e:
+            item.completed_at = original_completed_at  # 回滚内存状态
             self._show_error(f"办结失败: {e}")
 
     def _on_delete_item(self, item_id: str) -> None:
@@ -189,7 +211,9 @@ class AppController(QObject):
 
         try:
             self._store.delete_item(item_id)
-            self._todos = self._store.load_todos()
+            # 就地更新内存列表
+            self._todos = [t for t in self._todos if t.id != item_id]
+            self._archived = [t for t in self._archived if t.id != item_id]
             self._refresh_views()
             self._show_notification("已删除")
         except StoreError as e:
@@ -210,10 +234,27 @@ class AppController(QObject):
 
         try:
             self._store.update_item(item)
-            self._todos = self._store.load_todos()
+            # item 已在 self._todos 中原地更新，无需全量重读
             self._refresh_views()
         except StoreError as e:
+            item.progress.pop()  # 回滚内存状态
             self._show_error(f"添加进度失败: {e}")
+
+    def _on_title_changed(self, item_id: str, new_title: str) -> None:
+        """待办标题内联编辑后持久化"""
+        item = next((t for t in self._todos if t.id == item_id), None)
+        if not item:
+            return
+        old_title = item.title
+        item.title = new_title
+        try:
+            self._store.update_item(item)
+            # 无需刷新视图，卡片已就地更新
+            self._show_notification(f"已更新标题")
+        except StoreError as e:
+            item.title = old_title  # 回滚内存状态
+            self._refresh_views()  # 刷新视图以恢复旧标题显示
+            self._show_error(f"更新标题失败: {e}")
 
     def _on_search(self, query: str) -> None:
         """搜索待办（已内嵌在 expanded_view 中）"""
@@ -231,23 +272,44 @@ class AppController(QObject):
         try:
             restored = self._store.restore_item(item_id)
             if restored:
-                self._todos = self._store.load_todos()
-                self._archived = self._store.load_archived()
+                # 就地更新内存列表
+                self._archived = [a for a in self._archived if a.id != item_id]
+                self._todos.append(restored)
                 self._refresh_views()
                 self._show_notification(f"已恢复：{restored.title[:20]}")
         except StoreError as e:
             self._show_error(f"恢复失败: {e}")
 
     def _on_toggle_sticky(self, item_id: str) -> None:
-        """切换待办置顶状态"""
+        """切换待办置顶状态（带动画）"""
         item = next((t for t in self._todos if t.id == item_id), None)
-        if item:
-            item.sticky = not item.sticky
-            try:
-                self._store.update_item(item)
+        if not item:
+            return
+        original_sticky = item.sticky
+        item.sticky = not item.sticky
+        try:
+            self._store.update_item(item)
+            # item 已在 self._todos 中原地更新
+            if self._window.mode == "expanded":
+                # 带动画的置顶切换
+                self._expanded_view.animate_sticky(item_id, self._todos)
+            else:
                 self._refresh_views()
-            except StoreError as e:
-                self._show_error(f"置顶切换失败: {e}")
+        except StoreError as e:
+            item.sticky = original_sticky  # 回滚内存状态
+            self._show_error(f"置顶切换失败: {e}")
+
+    def _on_reorder_items(self, ordered_ids: list[str]) -> None:
+        """接收拖放排序后的新顺序并持久化"""
+        try:
+            self._store.reorder_items(ordered_ids)
+            # reorder_items 内部已保存到磁盘，无需全量重读
+            # 只需按 ordered_ids 顺序重新排列 self._todos（保持已有对象引用）
+            id_map = {t.id: t for t in self._todos}
+            self._todos = [id_map[i] for i in ordered_ids if i in id_map]
+            self._refresh_views()
+        except StoreError as e:
+            self._show_error(f"排序失败: {e}")
 
     def _on_quick_add_collapsed(self) -> None:
         """在折叠模式下快速添加"""
@@ -341,6 +403,73 @@ class AppController(QObject):
         """同步置顶按钮样式"""
         self._collapsed_view.set_pinned(self._pinned)
         self._expanded_view.set_pinned(self._pinned)
+
+    # ── 主题切换 ────────────────────────────────────────
+
+    def _on_toggle_theme(self, dark: bool) -> None:
+        """切换浅色/深色模式"""
+        AppTheme.switch_theme(dark)
+
+        # ── 更新全局样式 ──────────────────────────────────
+        app = QApplication.instance()
+        app.setStyleSheet(AppTheme.global_qss())
+        AppTheme.apply_palette(app)
+
+        # ── 更新自定义 tooltip ────────────────────────────
+        CustomTooltip.apply_theme_style()
+
+        # ── 更新主窗口全局样式（覆盖例程） ────────────────
+        self._window.setStyleSheet(AppTheme.global_qss())
+
+        # ── 更新各视图 ────────────────────────────────────
+        self._collapsed_view.reapply_theme()
+        self._expanded_view.reapply_theme()
+
+        # ── 持久化偏好 ────────────────────────────────────
+        settings = QSettings("Personal", "待办事项和便签")
+        settings.setValue("theme/dark", dark)
+
+    # ── 开机自启 ──────────────────────────────────────
+
+    REG_KEY = r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run"
+    REG_ENTRY = "待办事项和便签"
+
+    def _init_autostart(self) -> None:
+        """读取当前开机自启状态并同步到视图"""
+        enabled = False
+        if AppConfig.IS_WINDOWS:
+            try:
+                reg = QSettings(self.REG_KEY, QSettings.NativeFormat)
+                enabled = bool(reg.value(self.REG_ENTRY, ""))
+            except Exception:
+                pass
+        self._expanded_view.set_autostart(enabled)
+
+    def _on_toggle_autostart(self, enabled: bool) -> None:
+        """切换开机自启状态"""
+        if not AppConfig.IS_WINDOWS:
+            return
+
+        try:
+            reg = QSettings(self.REG_KEY, QSettings.NativeFormat)
+            if enabled:
+                # 获取当前可执行文件路径
+                if getattr(sys, "frozen", False):
+                    # PyInstaller 打包模式
+                    app_path = QApplication.instance().applicationFilePath()
+                else:
+                    # 源码开发模式：使用 python main.py
+                    script = Path(__file__).resolve().parent.parent / "main.py"
+                    app_path = f'"{sys.executable}" "{script}"'
+                reg.setValue(self.REG_ENTRY, app_path)
+            else:
+                reg.remove(self.REG_ENTRY)
+            reg.sync()
+            self._expanded_view.set_autostart(enabled)
+            self._show_notification("已开启开机自启" if enabled else "已关闭开机自启")
+        except Exception as e:
+            logger.error("设置开机自启失败: %s", e)
+            self._show_error(f"设置开机自启失败: {e}")
 
     # ── 键盘快捷键 ──────────────────────────────────────
 

@@ -30,7 +30,8 @@ class ElidedLabel(QLabel):
     def __init__(self, text: str = "", parent=None):
         super().__init__("", parent)
         self._full_text = text
-        self.setToolTip(text)  # 悬浮显示完整文本
+        # 透传鼠标事件到父控件（TodoCard 统一处理拖拽和双击编辑）
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
         # Expanding 让 layout 优先给扩展空间
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         # 关键：默认 QLabel.sizeHint() 返回完整文本的宽度，
@@ -39,11 +40,10 @@ class ElidedLabel(QLabel):
         self.setMinimumWidth(0)
 
     def setFullText(self, text: str) -> None:
-        """设置完整文本（自动省略显示，tooltip 同步）"""
+        """设置完整文本（自动省略显示）"""
         if text == self._full_text:
             return
         self._full_text = text
-        self.setToolTip(text)
         self.update()  # 触发 paintEvent 重绘
 
     def fullText(self) -> str:

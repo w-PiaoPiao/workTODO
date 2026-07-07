@@ -48,9 +48,28 @@ class TodoStore:
         self._save_items(self._archive_path, items)
 
     def add_item(self, item: TodoItem) -> None:
-        """添加一条新待办"""
+        """添加一条新待办（自动分配 position）"""
         items = self.load_todos()
+        # 新项排最后
+        max_pos = max((i.position for i in items), default=0)
+        item.position = max_pos + 1
         items.append(item)
+        self.save_todos(items)
+
+    def reorder_items(self, ordered_ids: list[str]) -> None:
+        """按 ordered_ids 顺序重新排列待办（positions 设为 0,1,2,...）"""
+        items = self.load_todos()
+        id_to_item = {i.id: i for i in items}
+        # 分配新位置
+        for idx, item_id in enumerate(ordered_ids):
+            if item_id in id_to_item:
+                id_to_item[item_id].position = idx
+        # 处理不在 ordered_ids 中的项
+        next_pos = len(ordered_ids)
+        for item in items:
+            if item.id not in ordered_ids:
+                item.position = next_pos
+                next_pos += 1
         self.save_todos(items)
 
     def update_item(self, updated: TodoItem) -> None:

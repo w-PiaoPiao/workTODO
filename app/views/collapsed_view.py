@@ -28,7 +28,7 @@ class CollapsedView(QFrame):
         super().__init__(parent)
 
         self.setFixedHeight(AppConfig.COLLAPSED_HEIGHT)
-        self.setStyleSheet(self._make_style())
+        self._pinned = True  # 默认置顶
 
         # ── 构建 UI ───────────────────────────────────────
         layout = QHBoxLayout()
@@ -41,11 +41,6 @@ class CollapsedView(QFrame):
 
         # 计数标签
         self._count_label = QLabel("没有待办事项")
-        self._count_label.setStyleSheet(f"""
-            font: {AppTheme.FONT["body"]};
-            color: {AppTheme.C["text_primary"]};
-            background: transparent;
-        """)
 
         # 弹簧
         spacer = QWidget()
@@ -56,21 +51,18 @@ class CollapsedView(QFrame):
         self._quick_add_btn = QPushButton("＋")
         self._quick_add_btn.setFixedSize(28, 28)
         self._quick_add_btn.setToolTip("快速添加待办")
-        self._quick_add_btn.setStyleSheet(self._btn_style())
         self._quick_add_btn.clicked.connect(self.signal_quick_add_clicked.emit)
 
         # 置顶切换按钮
         self._pin_btn = QPushButton("📌")
         self._pin_btn.setFixedSize(28, 28)
         self._pin_btn.setToolTip("点击切换置顶")
-        self._pin_btn.setStyleSheet(self._pin_btn_style(True))
         self._pin_btn.clicked.connect(self.signal_toggle_pin.emit)
 
         # 展开按钮
         self._expand_btn = QPushButton("⤢")
         self._expand_btn.setFixedSize(28, 28)
         self._expand_btn.setToolTip("展开")
-        self._expand_btn.setStyleSheet(self._btn_style())
         self._expand_btn.clicked.connect(self.signal_expand_clicked.emit)
 
         # 组装
@@ -82,6 +74,9 @@ class CollapsedView(QFrame):
         layout.addWidget(self._expand_btn)
 
         self.setLayout(layout)
+
+        # ── 应用主题样式 ──────────────────────────────────
+        self.reapply_theme()
 
     # ── 更新 ──────────────────────────────────────────────
 
@@ -96,9 +91,24 @@ class CollapsedView(QFrame):
 
     def set_pinned(self, pinned: bool) -> None:
         """同步置顶按钮样式（由控制器调用）"""
+        self._pinned = pinned
         self._pin_btn.setText("📌" if pinned else "📍")
-        self._pin_btn.setStyleSheet(self._pin_btn_style(pinned))
+        self._pin_btn.setStyleSheet(AppTheme.pin_btn_style(pinned))
         self._pin_btn.setToolTip("点击取消置顶" if pinned else "点击置顶")
+
+    # ── 主题重载 ──────────────────────────────────────────
+
+    def reapply_theme(self) -> None:
+        """重新应用当前主题样式（初始化 / 主题切换时调用）"""
+        self.setStyleSheet(self._make_style())
+        self._count_label.setStyleSheet(f"""
+            font: {AppTheme.FONT["body"]};
+            color: {AppTheme.C["text_primary"]};
+            background: transparent;
+        """)
+        self._quick_add_btn.setStyleSheet(self._btn_style())
+        self._pin_btn.setStyleSheet(AppTheme.pin_btn_style(self._pinned))
+        self._expand_btn.setStyleSheet(self._btn_style())
 
     # ── 样式 ──────────────────────────────────────────────
 
@@ -126,24 +136,5 @@ class CollapsedView(QFrame):
             QPushButton:hover {{
                 background: {C["bg_hover"]};
                 color: {C["accent"]};
-            }}
-        """
-
-    @staticmethod
-    def _pin_btn_style(pinned: bool = True) -> str:
-        C = AppTheme.C
-        color = C["danger"] if pinned else C["text_disabled"]
-        hov_color = C["danger"] if pinned else C["text_secondary"]
-        return f"""
-            QPushButton {{
-                font-size: 13px;
-                color: {color};
-                border-radius: 4px;
-                padding: 2px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: {C["bg_hover"]};
-                color: {hov_color};
             }}
         """

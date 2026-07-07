@@ -87,6 +87,7 @@ class TodoItem:
     completed_at: Optional[str] = None
     progress: list[ProgressEntry] = field(default_factory=list)
     sticky: bool = False  # 是否置顶
+    position: int = 0     # 手动排序位置（0=最前）
 
     # ── 属性 ──────────────────────────────────────────────
 
@@ -132,6 +133,7 @@ class TodoItem:
             "completed_at": self.completed_at,
             "progress": [p.to_dict() for p in self.progress],
             "sticky": self.sticky,
+            "position": self.position,
         }
 
     @classmethod
@@ -147,4 +149,5 @@ class TodoItem:
                 for p in data.get("progress", [])
             ],
             sticky=data.get("sticky", False),
+            position=data.get("position", 0),
         )

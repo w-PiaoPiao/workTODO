@@ -213,9 +213,20 @@ class MainWindow(QWidget):
         if handle:
             handle.setFlag(Qt.WindowStaysOnTopHint, enabled)
 
+    def _current_screen(self) -> QScreen | None:
+        """获取窗口当前所在屏幕（而非 primaryScreen）"""
+        screen = QApplication.screenAt(self.geometry().center())
+        if screen is None:
+            # fallback：遍历所有屏幕
+            for s in QApplication.screens():
+                if s.geometry().intersects(self.geometry()):
+                    return s
+            screen = QApplication.primaryScreen()
+        return screen
+
     def _snap_to_screen_edge(self) -> None:
-        """确保窗口不超出屏幕边界"""
-        screen = QApplication.primaryScreen()
+        """确保窗口不超出当前屏幕边界（支持多显示器）"""
+        screen = self._current_screen()
         if not screen:
             return
         geo = screen.availableGeometry()

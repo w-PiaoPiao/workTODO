@@ -11,10 +11,11 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt, QMimeData, QPoint, QRect, QEvent
+from PySide6.QtGui import QDrag, QMouseEvent
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLineEdit, QWidget,
+    QLineEdit, QWidget, QApplication, QGraphicsOpacityEffect,
 )
 from app.config import AppConfig
 from app.views.theme import AppTheme
@@ -30,11 +31,13 @@ class TodoCard(QFrame):
     signal_deleted = Signal(str)  # item_id
     signal_progress_added = Signal(str, str)  # item_id, text
     signal_sticky_toggled = Signal(str)  # item_id
+    signal_title_changed = Signal(str, str)  # item_id, new_title
 
     def __init__(self, item: TodoItem, parent=None):
         super().__init__(parent)
         self._item = item
         self._editing = False
+        self._drag_start_pos = None  # 拖拽起始位置
 
         self._build_ui()
         self._populate(item)
@@ -51,6 +54,7 @@ class TodoCard(QFrame):
         # ── 顶行：标题 + 操作按钮 ────────────────────────────
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
+        self._title_row = top_row  # 保存引用，供 _start_edit 使用
 
         self._title_label = ElidedLabel()
         self._title_label.setStyleSheet(f"""
@@ -60,9 +64,6 @@ class TodoCard(QFrame):
             padding: 2px 0;
         """)
         # ElidedLabel 已设置 Expanding + minimumWidth(0)
-
-        # 双击标题进入编辑模式
-        self._title_label.mouseDoubleClickEvent = self._start_edit
 
         self._sticky_btn = QPushButton("↑")
         self._sticky_btn.setFixedSize(24, 24)
@@ -155,6 +156,9 @@ class TodoCard(QFrame):
             self._sticky_btn.setVisible(False)
 
         self._title_label.setFullText(item.title)
+        # 卡片级别 tooltip：ElidedLabel 的 tooltip 因 WA_TransparentForMouseEvents 不可用，
+        # 需在 TodoCard 级别设置，当鼠标悬浮在标题区域时显示完整文本
+        self.setToolTip(item.title)
 
         # 置顶状态
         self._sticky_btn.setStyleSheet(self._sticky_btn_style(item.sticky))
@@ -174,6 +178,80 @@ class TodoCard(QFrame):
         # 只发射信号，由控制器处理翻转和刷新
         self.signal_sticky_toggled.emit(self._item.id)
 
+    # ── 拖拽支持 ──────────────────────────────────────────
+
+    def _is_title_click(self, event: QMouseEvent) -> bool:
+        """判断鼠标事件是否点击在标题区域"""
+        return (event.button() == Qt.LeftButton
+                and self._title_label.isVisible()
+                and self._title_label.rect().contains(
+                    self._title_label.mapFrom(self, event.position().toPoint())))
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """处理单击——记录拖拽起始位置"""
+        if self._is_title_click(event):
+            self._drag_start_pos = event.position().toPoint()
+            event.accept()
+            return
+
+        # 标题区域之外的点击 → 清理拖拽状态
+        self._drag_start_pos = None
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        """处理双击——进入内联编辑"""
+        if self._is_title_click(event):
+            if not self._item.is_completed and not self._editing:
+                self._start_edit()
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if (self._drag_start_pos is not None
+                and event.buttons() == Qt.LeftButton
+                and (event.position().toPoint() - self._drag_start_pos).manhattanLength()
+                >= QApplication.startDragDistance()):
+            self._start_drag(event)
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        self._drag_start_pos = None
+        super().mouseReleaseEvent(event)
+
+    def _start_drag(self, event) -> None:
+        """启动拖拽"""
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setText(f"todo-card:{self._item.id}")
+        drag.setMimeData(mime)
+
+        # 拖拽时半透明
+        opacity = QGraphicsOpacityEffect()
+        opacity.setOpacity(0.4)
+        self.setGraphicsEffect(opacity)
+
+        # 拖拽小图（略微缩小）
+        pixmap = self.grab()
+        pixmap = pixmap.scaled(
+            int(self.width() * 0.95), int(self.height() * 0.95),
+            Qt.KeepAspectRatio, Qt.SmoothTransformation,
+        )
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(event.position().toPoint())
+
+        self._drag_start_pos = None
+
+        # exec() 运行本地事件循环，拖放完成后才返回
+        drag.exec(Qt.MoveAction)
+
+        # 恢复外观（拖放处理可能已销毁此 widget，需防御）
+        try:
+            self.setGraphicsEffect(None)
+        except RuntimeError:
+            pass  # widget 已被 deleteLater
+
     # ── 文字溢出省略（由 ElidedLabel 内部 paintEvent 处理）──
 
     def _on_progress_submit(self) -> None:
@@ -182,7 +260,7 @@ class TodoCard(QFrame):
             self.signal_progress_added.emit(self._item.id, text)
             self._progress_input.clear()
 
-    def _start_edit(self, event) -> None:
+    def _start_edit(self) -> None:
         """双击标题进入内联编辑"""
         if self._editing or self._item.is_completed:
             return
@@ -197,18 +275,18 @@ class TodoCard(QFrame):
         """)
         self._edit_input.selectAll()
 
-        # 替换标题标签为输入框
-        label_parent = self._title_label.parent()
-        if label_parent:
-            layout = self._title_label.parent().layout()
-            if isinstance(layout, QHBoxLayout):
-                idx = layout.indexOf(self._title_label)
-                layout.insertWidget(idx, self._edit_input)
-                self._title_label.hide()
+        # 替换标题标签为输入框（使用保存的 _title_row 引用）
+        layout = self._title_row
+        idx = layout.indexOf(self._title_label)
+        layout.insertWidget(idx, self._edit_input)
+        self._title_label.hide()
 
         self._edit_input.setFocus()
         self._edit_input.returnPressed.connect(self._finish_edit)
         self._edit_input.editingFinished.connect(self._finish_edit)
+
+        # 安装全局事件过滤器：点击编辑框外部时自动保存并退出编辑
+        QApplication.instance().installEventFilter(self)
 
     def _finish_edit(self) -> None:
         """完成内联编辑"""
@@ -218,20 +296,123 @@ class TodoCard(QFrame):
 
         new_title = self._edit_input.text().strip()
         if new_title and new_title != self._item.title:
-            self._item.title = new_title
             self._title_label.setFullText(new_title)
+            self.setToolTip(new_title)  # 同步卡片 tooltip（因 ElidedLabel 鼠标透传导致原生 tooltip 不可用）
+            self.signal_title_changed.emit(self._item.id, new_title)
 
-        # 恢复标签显示
+        # 保护：如果信号导致的 StoreError 已触发 _refresh_views 销毁了卡片，
+        # 后续的 widget 操作不再安全（会抛出 RuntimeError）
+        try:
+            self._title_label.show()
+            if self._edit_input:
+                self._edit_input.deleteLater()
+                self._edit_input = None
+            QApplication.instance().removeEventFilter(self)
+        except RuntimeError:
+            # widget 已被 deleteLater 实际删除
+            self._edit_input = None
+
+    def eventFilter(self, obj, event) -> bool:
+        """全局事件过滤器：点击编辑框外部时自动保存并退出编辑"""
+        if self._editing and event.type() == QEvent.MouseButtonPress:
+            edit_rect = QRect(
+                self._edit_input.mapToGlobal(QPoint(0, 0)),
+                self._edit_input.size(),
+            )
+            if not edit_rect.contains(event.globalPosition().toPoint()):
+                self._finish_edit()
+        return super().eventFilter(obj, event)
+
+    def keyPressEvent(self, event) -> None:
+        """键盘事件：编辑状态下 Escape 取消编辑"""
+        if self._editing and event.key() == Qt.Key_Escape:
+            self._cancel_edit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _cancel_edit(self) -> None:
+        """取消编辑，恢复原标题"""
+        self._editing = False
         self._title_label.show()
         if self._edit_input:
             self._edit_input.deleteLater()
             self._edit_input = None
+        QApplication.instance().removeEventFilter(self)
 
     # ── 更新 ──────────────────────────────────────────────
 
     def update_item(self, item: TodoItem) -> None:
         """更新卡片显示（无重建）"""
         self._populate(item)
+
+    def collapse_progress(self) -> None:
+        """收起进度展开（封装对 ProgressWidget 的内部访问）"""
+        self._progress_widget.collapse()
+
+    def reapply_theme(self) -> None:
+        """重新应用当前主题样式（主题切换时调用，无需重建卡片）"""
+        C = AppTheme.C
+        item = self._item
+
+        # 卡片背景
+        self.setStyleSheet(AppTheme.card_style(completed=item.is_completed))
+
+        # 标题
+        if item.is_completed:
+            self._title_label.setStyleSheet(f"""
+                font: {AppTheme.FONT["body"]};
+                color: {C["text_disabled"]};
+                background: transparent;
+                text-decoration: line-through;
+                padding: 2px 0;
+            """)
+        else:
+            self._title_label.setStyleSheet(f"""
+                font: {AppTheme.FONT["body"]};
+                color: {C["text_primary"]};
+                background: transparent;
+                padding: 2px 0;
+            """)
+
+        # 按钮样式
+        self._sticky_btn.setStyleSheet(self._sticky_btn_style(item.sticky))
+        self._complete_btn.setStyleSheet(self._action_btn_style())
+        self._delete_btn.setStyleSheet(self._delete_btn_style())
+
+        # 进度输入区域
+        self._progress_input.setStyleSheet(f"""
+            QLineEdit {{
+                border: none;
+                font: {AppTheme.FONT["small"]};
+                color: {C["text_secondary"]};
+                padding: 2px 4px;
+                background: transparent;
+            }}
+            QLineEdit:focus {{
+                color: {C["text_primary"]};
+            }}
+        """)
+        self._progress_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 12px;
+                color: {C["text_disabled"]};
+                border: none;
+                padding: 0;
+                background: transparent;
+            }}
+            QPushButton:hover {{
+                color: {C["accent"]};
+            }}
+        """)
+
+        # 进度子组件（轻量重建）
+        self._progress_widget.reapply_theme()
+
+    @property
+    def progress_toggled_signal(self):
+        """进度展开/收起信号"""
+        return self._progress_widget.signal_show_all_changed
 
     # ── 样式 ──────────────────────────────────────────────
 

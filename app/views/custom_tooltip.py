@@ -59,25 +59,33 @@ class CustomTooltip(QFrame):
 
         self._label = QLabel()
         self._label.setWordWrap(True)
-        self._label.setMaximumWidth(400)
+        self._label.setMaximumWidth(4000)
         self._label.setTextInteractionFlags(Qt.NoTextInteraction)
         layout.addWidget(self._label)
 
     def _apply_style(self) -> None:
-        """白底暗字高可读性样式"""
-        self.setStyleSheet("""
-            QFrame {
-                background: #FFFFFF;
-                color: #1A1A1A;
-                border: 1px solid #E0E0E0;
+        """亮底暗字高可读性样式（跟随当前主题）"""
+        from app.views.theme import AppTheme
+        C = AppTheme.C
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: {C["bg_card"]};
+                color: {C["text_primary"]};
+                border: 1px solid {C["border"]};
                 border-radius: 4px;
-            }
-            QLabel {
-                color: #1A1A1A;
+            }}
+            QLabel {{
+                color: {C["text_primary"]};
                 background: transparent;
                 font-size: 10pt;
-            }
+            }}
         """)
+
+    @classmethod
+    def apply_theme_style(cls) -> None:
+        """应用当前主题样式到 tooltip 单例（供外部主题切换时调用）"""
+        instance = cls()
+        instance._apply_style()
 
     def show_tip(self, text: str, pos: QPoint | None = None, timeout_ms: int | None = None) -> None:
         """显示 tooltip 在指定位置（默认鼠标位置右下方），并限制在屏幕内"""
@@ -87,14 +95,17 @@ class CustomTooltip(QFrame):
 
         self._label.setText(text)
 
-        # 计算最大宽度：400px 内完整显示，超过则换行
+        # 计算文本实际宽度，取文本宽度与最大宽度较小值
         fm = self._label.fontMetrics()
+        tw = fm.horizontalAdvance(text)
+        mw = min(max(tw + 20, 40), 4000)
         rect = fm.boundingRect(
-            QRect(0, 0, 400, 2000),
+            QRect(0, 0, mw, 10000),
             Qt.TextWordWrap,
             text,
         )
-        self._label.setFixedSize(rect.width() + 4, rect.height() + 4)
+        self._label.setFixedSize(min(rect.width(), mw) + 8,
+                                 rect.height() + 8)
         self.adjustSize()
 
         if pos is None:

@@ -262,7 +262,9 @@ class ArchiveDialog(QDialog):
                 color: white;
             }}
         """)
-        restore_btn.clicked.connect(lambda: self.signal_restore_item.emit(item.id))
+        restore_btn.clicked.connect(
+            lambda checked, i=item: self.signal_restore_item.emit(i.id)
+        )
         layout.addWidget(restore_btn, alignment=Qt.AlignRight)
 
         card.setLayout(layout)

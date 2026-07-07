@@ -32,3 +32,24 @@ Windows 桌面悬浮待办事项软件，支持快速记录、进度跟踪、办
 ```bash
 python main.py
 ```
+
+## 版本规则
+
+每次打包即发布一个新版本。版本号遵守**语义化版本**（SemVer），格式 `主版本.次版本.修订号`。
+
+- 默认情况下，修订号（最后一位）加 1：`0.1.1` → `0.1.2` → `0.1.3`
+- 若有特别要求（如重大更新），再按需调整主版本或次版本
+
+打包前需同步更新 `app/config.py` 中的 `APP_VERSION`。
+
+## 打包约定
+
+打包 EXE 时，文件名须附加 `config.py` 中 `AppConfig.APP_VERSION` 定义的版本号，格式为 `待办事项和便签v{版本号}.exe`。
+
+```bash
+# 示例：当前版本 0.1.1，产物为 待办事项和便签v0.1.1.exe
+pyinstaller --onefile --windowed \
+    --name "待办事项和便签v0.1.1" \
+    --clean --noconfirm \
+    main.py
+```

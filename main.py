@@ -24,12 +24,18 @@ def main():
 
     # ── 启动 Qt 应用 ──────────────────────────────────────
     from PySide6.QtWidgets import QApplication
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import Qt, QSharedMemory
 
     app = QApplication(sys.argv)
     app.setApplicationName("待办事项和便签")
     app.setOrganizationName("Personal")
     app.setQuitOnLastWindowClosed(False)
+
+    # ── 单实例锁：防止同时打开多个窗口 ────────────────────
+    _lock = QSharedMemory("待办事项和便签-SingleInstanceLock")
+    if not _lock.create(1):
+        # 已有实例在运行，直接退出
+        sys.exit(0)
 
     # 高 DPI 支持
     app.setStyle("Fusion")
@@ -41,11 +47,7 @@ def main():
 
     # ── Windows 下 QSS background 无法控制 tooltip 实际渲染
     #    （Windows 用 GDI 画 tooltip 窗口），必须通过 QPalette 角色设置 ──
-    from PySide6.QtGui import QPalette, QColor
-    palette = app.palette()
-    palette.setColor(QPalette.ToolTipBase, QColor("#FFFFFF"))
-    palette.setColor(QPalette.ToolTipText, QColor("#1A1A1A"))
-    app.setPalette(palette)
+    AppTheme.apply_palette(app)
 
     # ── 终极方案：自定义 tooltip ─────────────────────────
     # 若 QApplication QSS + QPalette 仍无法覆盖 Windows 原生 tooltip 黑底，
