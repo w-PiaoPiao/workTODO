@@ -16,7 +16,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, QSettings
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QMessageBox, QInputDialog,
 )
-from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QColor, QFont, QShortcut, QKeySequence, QPalette
+from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QPainterPath, QPen, QColor, QFont, QShortcut, QKeySequence, QPalette
 
 from app.config import AppConfig
 from app.models.todo_item import TodoItem, ProgressEntry, StoreError
@@ -388,17 +388,8 @@ class AppController(QObject):
         """初始化系统托盘"""
         self._tray_icon = QSystemTrayIcon(self._window)
 
-        # 手绘一个 📋 图标（Windows 没有主题图标）
-        pixmap = QPixmap(32, 32)
-        pixmap.fill(QColor(0, 0, 0, 0))
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        # 蓝色圆形背景
-        painter.setBrush(QColor("#0078D4"))
-        painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(1, 1, 30, 30, 6, 6)
-        painter.end()
-        self._tray_icon.setIcon(QIcon(pixmap))
+        # 美观的多分辨率托盘图标（剪切板 ✓）
+        self._tray_icon.setIcon(self._create_tray_icon())
         self._tray_icon.setToolTip("待办事项和便签")
 
         # 右键菜单
@@ -419,6 +410,87 @@ class AppController(QObject):
         self._tray_icon.activated.connect(self._on_tray_activated)
 
         self._tray_icon.show()
+
+    def _create_tray_icon(self) -> QIcon:
+        """创建美观的多分辨率托盘图标（剪切板 ✓）"""
+        icon = QIcon()
+
+        for size in (48, 32, 24, 16):
+            pixmap = QPixmap(size, size)
+            pixmap.fill(QColor(0, 0, 0, 0))
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+            s = size  # shorthand
+            m = max(1, s // 16)  # outer margin
+            inner = s - 2 * m
+
+            # ── 背景：蓝色圆角方块 ──
+            painter.setBrush(QColor("#0078D4"))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(m, m, inner, inner, inner // 4, inner // 4)
+
+            # ── 顶部高光（2px 浅色渐变条） ──
+            highlight = QColor(255, 255, 255, 40)
+            painter.setBrush(highlight)
+            painter.drawRoundedRect(m, m, inner, inner // 3, inner // 4, inner // 4)
+            # 把底部抹平（只保留顶部圆角）
+            painter.drawRect(m, m + inner // 6, inner, inner // 6)
+
+            if s >= 24:
+                # ── 剪切板纸张 ──
+                pm = s // 4          # paper margin ≈ 8@32, 6@24
+                pw = s - 2 * pm - 1  # paper width
+                ph = pw + 2          # paper height (slightly taller)
+                px = pm
+                py = pm + 1
+                radius = max(1, s // 10)
+                painter.setBrush(QColor(255, 255, 255, 235))
+                painter.drawRoundedRect(px, py, pw, ph, radius, radius)
+
+                # ── 回形针 ──
+                cw = max(3, s // 8)     # clip width
+                ch = max(2, s // 6)     # clip height
+                cx = (s - cw) // 2
+                cy = py - 1
+                painter.setBrush(QColor("#0078D4"))
+                painter.drawRoundedRect(cx, cy, cw, ch, 1, 1)
+
+                # ── 勾号 ✓（蓝色） ──
+                pen = QPen(QColor("#0078D4"), max(1.5, s / 11))
+                pen.setCapStyle(Qt.RoundCap)
+                pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(pen)
+
+                left_x = px + pw * 0.18
+                mid_x = px + pw * 0.48
+                mid_y = py + ph * 0.62
+                right_x = px + pw * 0.82
+                top_y = py + ph * 0.28
+
+                path = QPainterPath()
+                path.moveTo(left_x, mid_y)
+                path.lineTo(mid_x, py + ph * 0.76)
+                path.lineTo(right_x, top_y)
+                painter.strokePath(path, pen)
+            else:
+                # ── 小尺寸（16px）：简洁白色勾号 ──
+                pen = QPen(QColor(255, 255, 255, 240), 2.0)
+                pen.setCapStyle(Qt.RoundCap)
+                pen.setJoinStyle(Qt.RoundJoin)
+                painter.setPen(pen)
+
+                path = QPainterPath()
+                path.moveTo(s * 0.25, s * 0.52)
+                path.lineTo(s * 0.44, s * 0.70)
+                path.lineTo(s * 0.75, s * 0.35)
+                painter.strokePath(path, pen)
+
+            painter.end()
+            icon.addPixmap(pixmap)
+
+        return icon
 
     def _on_tray_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.DoubleClick:
