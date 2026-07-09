@@ -135,6 +135,8 @@ class AppController(QObject):
         self._expanded_view.signal_sticky_toggled.connect(self._on_toggle_sticky)
         self._expanded_view.signal_reorder_items.connect(self._on_reorder_items)
         self._expanded_view.signal_title_changed.connect(self._on_title_changed)
+        self._expanded_view.signal_progress_edited.connect(self._on_edit_progress)
+        self._expanded_view.signal_progress_deleted.connect(self._on_delete_progress)
         self._expanded_view.signal_theme_toggled.connect(self._on_toggle_theme)
         self._expanded_view.signal_autostart_toggled.connect(self._on_toggle_autostart)
 
@@ -239,6 +241,54 @@ class AppController(QObject):
         except StoreError as e:
             item.progress.pop()  # 回滚内存状态
             self._show_error(f"添加进度失败: {e}")
+
+    def _on_edit_progress(self, item_id: str, entry_id: str, new_text: str) -> None:
+        """编辑一条进度记录"""
+        new_text = new_text.strip()
+        if not new_text:
+            return
+
+        item = next((t for t in self._todos if t.id == item_id), None)
+        if not item:
+            return
+
+        entry = next((p for p in item.progress if p.id == entry_id), None)
+        if not entry:
+            return
+
+        old_text = entry.text
+        entry.text = new_text
+
+        try:
+            self._store.update_item(item)
+            # item 已在 self._todos 中原地更新
+            self._show_notification("进度已更新")
+        except StoreError as e:
+            entry.text = old_text  # 回滚内存状态
+            self._refresh_views()
+            self._show_error(f"编辑进度失败: {e}")
+
+    def _on_delete_progress(self, item_id: str, entry_id: str) -> None:
+        """删除一条进度记录"""
+        item = next((t for t in self._todos if t.id == item_id), None)
+        if not item:
+            return
+
+        # 找到要删除的条目索引
+        idx = next((i for i, p in enumerate(item.progress) if p.id == entry_id), None)
+        if idx is None:
+            return
+
+        removed = item.progress.pop(idx)
+
+        try:
+            self._store.update_item(item)
+            self._refresh_views()
+            self._show_notification("进度已删除")
+        except StoreError as e:
+            item.progress.insert(idx, removed)  # 回滚内存状态
+            self._refresh_views()
+            self._show_error(f"删除进度失败: {e}")
 
     def _on_title_changed(self, item_id: str, new_title: str) -> None:
         """待办标题内联编辑后持久化"""
@@ -467,13 +517,16 @@ class AppController(QObject):
                 if getattr(sys, "frozen", False):
                     # PyInstaller 打包模式
                     app_path = QApplication.instance().applicationFilePath()
+                    app_path = f'"{app_path}"'  # 引号包裹，防止路径含空格
                 else:
                     # 源码开发模式：使用 python main.py
-                    script = Path(__file__).resolve().parent.parent / "main.py"
+                    script = Path(__file__).resolve().parent.parent.parent / "main.py"
                     app_path = f'"{sys.executable}" "{script}"'
                 reg.setValue(self.REG_ENTRY, app_path)
+                logger.info("开机自启写入注册表: %s = %s", self.REG_ENTRY, app_path)
             else:
                 reg.remove(self.REG_ENTRY)
+                logger.info("已从注册表移除开机自启条目: %s", self.REG_ENTRY)
             reg.sync()
             self._expanded_view.set_autostart(enabled)
             self._show_notification("已开启开机自启" if enabled else "已关闭开机自启")

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QLabel, QPushButton, QFrame, QSizePolicy,
 )
@@ -77,6 +78,14 @@ class CollapsedView(QFrame):
 
         # ── 应用主题样式 ──────────────────────────────────
         self.reapply_theme()
+
+    # ── 双击展开 ──────────────────────────────────────────
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        """双击折叠条任意位置展开"""
+        self.signal_expand_clicked.emit()
+        event.accept()
+        super().mouseDoubleClickEvent(event)
 
     # ── 更新 ──────────────────────────────────────────────
 

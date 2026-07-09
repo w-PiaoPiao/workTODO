@@ -37,6 +37,8 @@ class ExpandedView(QFrame):
     signal_sticky_toggled = Signal(str)  # 待办置顶切换（item_id）
     signal_reorder_items = Signal(list)  # 卡片拖动排序 [item_id, ...]
     signal_title_changed = Signal(str, str)  # item_id, new_title
+    signal_progress_edited = Signal(str, str, str)  # item_id, entry_id, new_text
+    signal_progress_deleted = Signal(str, str)  # item_id, entry_id
     signal_theme_toggled = Signal(bool)  # dark=True
     signal_autostart_toggled = Signal(bool)  # enabled=True
 
@@ -57,6 +59,7 @@ class ExpandedView(QFrame):
         self._search_timer.setSingleShot(True)
         self._search_timer.timeout.connect(self._on_search_flush)
 
+        self._built = False  # 标记是否已完成构造，防止 _build_ui 中事件过滤器访问未初始化的属性
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -110,6 +113,8 @@ class ExpandedView(QFrame):
         # ── 应用主题样式 ──────────────────────────────────
         self.reapply_theme()
 
+        self._built = True
+
     # ── 标题栏 ────────────────────────────────────────────
 
     def _make_title_bar(self) -> QWidget:
@@ -121,6 +126,9 @@ class ExpandedView(QFrame):
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
         """)
+        # 先在实例变量中保存引用，再安装事件过滤器（防止 setLayout 触发布局事件时 eventFilter 访问未初始化的 self._title_bar）
+        self._title_bar = bar
+        bar.installEventFilter(self)
 
         layout = QHBoxLayout()
         layout.setContentsMargins(12, 0, 8, 0)
@@ -349,6 +357,8 @@ class ExpandedView(QFrame):
             card.signal_progress_added.connect(self.signal_progress_added.emit)
             card.signal_sticky_toggled.connect(self.signal_sticky_toggled.emit)
             card.signal_title_changed.connect(self.signal_title_changed.emit)
+            card.signal_progress_edited.connect(self.signal_progress_edited.emit)
+            card.signal_progress_deleted.connect(self.signal_progress_deleted.emit)
             # 进度展开/收起监听（使用 UniqueConnection 防止重复连接）
             card.progress_toggled_signal.connect(
                 lambda show_all, c=card: self._on_progress_toggle(c, show_all),
@@ -419,7 +429,16 @@ class ExpandedView(QFrame):
     # ── 事件过滤器：点击外部收起进度 + 拖放排序 ──────────
 
     def eventFilter(self, obj, event) -> bool:
-        """合并事件路由：点击外部收起进度 + 拖放排序"""
+        """合并事件路由：标题栏双击折叠 + 点击外部收起进度 + 拖放排序"""
+        # 构造完成前所有事件直接透传（_build_ui 中事件可能先于属性初始化触发）
+        if not self._built:
+            return super().eventFilter(obj, event)
+
+        # 标题栏双击 → 折叠
+        if obj is self._title_bar and event.type() == QEvent.MouseButtonDblClick:
+            self.signal_collapse_clicked.emit()
+            return True
+
         is_container = obj is self._list_container
         is_viewport = obj is self._scroll_area.viewport()
 

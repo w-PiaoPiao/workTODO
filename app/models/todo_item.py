@@ -60,15 +60,17 @@ class ProgressEntry:
     """一条进度记录"""
     text: str
     timestamp: str = field(default_factory=_now_iso)
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     def to_dict(self) -> dict:
-        return {"text": self.text, "timestamp": self.timestamp}
+        return {"text": self.text, "timestamp": self.timestamp, "id": self.id}
 
     @classmethod
     def from_dict(cls, data: dict) -> "ProgressEntry":
         return cls(
             text=data.get("text", ""),
             timestamp=data.get("timestamp", _now_iso()),
+            id=data.get("id", uuid.uuid4().hex),  # 兼容旧数据
         )
 
     @property

@@ -139,8 +139,7 @@ class MainWindow(QWidget):
             event.accept()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
-        # 双击空白区域切换模式
-        self.toggle_mode()
+        # 双击切换模式的功能已由具体视图（CollapsedView / 标题栏）各自处理
         super().mouseDoubleClickEvent(event)
 
     # ── 键盘事件 ──────────────────────────────────────────

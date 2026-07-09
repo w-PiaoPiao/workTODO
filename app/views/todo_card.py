@@ -32,6 +32,8 @@ class TodoCard(QFrame):
     signal_progress_added = Signal(str, str)  # item_id, text
     signal_sticky_toggled = Signal(str)  # item_id
     signal_title_changed = Signal(str, str)  # item_id, new_title
+    signal_progress_edited = Signal(str, str, str)  # item_id, entry_id, new_text
+    signal_progress_deleted = Signal(str, str)  # item_id, entry_id
 
     def __init__(self, item: TodoItem, parent=None):
         super().__init__(parent)
@@ -92,6 +94,12 @@ class TodoCard(QFrame):
 
         # ── 进度区域 ──────────────────────────────────────
         self._progress_widget = ProgressWidget()
+        self._progress_widget.signal_progress_edited.connect(
+            lambda entry_id, new_text: self.signal_progress_edited.emit(
+                self._item.id, entry_id, new_text))
+        self._progress_widget.signal_progress_deleted.connect(
+            lambda entry_id: self.signal_progress_deleted.emit(
+                self._item.id, entry_id))
         main_layout.addWidget(self._progress_widget)
 
         # ── 添加进度行 ────────────────────────────────────
