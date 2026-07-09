@@ -2,7 +2,7 @@
 
 > Windows 桌面悬浮待办事项软件 — 像便利贴一样悬浮在桌面，支持深色/浅色主题、进度追踪、卡片排序。
 
-![Python](https://img.shields.io/badge/Python-3.12-blue) ![PySide6](https://img.shields.io/badge/PySide6-6.11%2B-green) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey) ![Version](https://img.shields.io/badge/Version-0.2.0-orange)
+![Python](https://img.shields.io/badge/Python-3.12-blue) ![PySide6](https://img.shields.io/badge/PySide6-6.11%2B-green) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey) ![Version](https://img.shields.io/badge/Version-0.2.1-orange)
 
 ---
 
@@ -15,6 +15,8 @@
 | 🌗 **深色/浅色主题** | 一键切换，跟随系统偏好，持久化记忆 |
 | ⚡ **快速添加** | 折叠/展开模式下都能一键添加新待办 |
 | 📝 **进度追踪** | 每条待办可多次添加进度描述，自动记录时间戳 |
+| ✏️ **进度编辑** | 双击进度文本修改内容，hover 蓝色边框提示 |
+| 🗑️ **进度删除** | 展开进度时每行末尾 ✕ 按钮可删除单条进度 |
 | ✅ **一键办结** | 勾选完成，自动归档，历史可查 |
 | 📦 **归档管理** | 办结内容移入归档，支持搜索查看和恢复 |
 | 🔍 **搜索筛选** | 按关键词实时过滤待办和进度内容（300ms 防抖） |
@@ -93,12 +95,12 @@ python main.py --debug
 pip install pyinstaller>=6.21
 
 pyinstaller --onefile --windowed \
-    --name "待办事项和便签v0.2.0" \
+    --name "待办事项和便签v0.2.1" \
     --clean --noconfirm \
     main.py
 ```
 
-产物位于 `dist/待办事项和便签v0.2.0.exe`（约 46 MB，含 PySide6 完整运行时）。
+产物位于 `dist/待办事项和便签v0.2.1.exe`（约 46 MB，含 PySide6 完整运行时）。
 
 ## 📖 使用指南
 
@@ -113,6 +115,8 @@ pyinstaller --onefile --windowed \
 | **删除** | 卡片上的 [✕] 按钮（弹出确认） |
 | **编辑标题** | 双击标题文字，`Escape` 取消 |
 | **添加进度** | 卡片底部输入进度后回车 |
+| **编辑进度** | 展开全部进度，双击进度文本（hover 蓝色边框提示） |
+| **删除进度** | 展开全部进度，点击进度行末尾 ✕ 按钮 |
 | **展开全部进度** | 点击进度前的 ▼ |
 | **卡片排序** | 拖拽卡片到目标位置 |
 | **置顶卡片** | 点击卡片上的 [↑] |
@@ -197,6 +201,7 @@ pyinstaller --onefile --windowed \
 
 | 版本 | 日期 | 主要内容 |
 |------|------|----------|
+| v0.2.1 | 2026-07-09 | 进度条目编辑/删除，双击折叠限制在标题栏，开机自启 bug 修复 |
 | v0.2.0 | 2026-07-07 | 深色/浅色主题，内联编辑，开机自启，拖拽排序增强，多显示器支持，事件过滤器重构，O(N²) 性能修复 |
 | v0.1.1 | 2026-06-30 | 进度条折叠/展开、卡片拖拽排序、置顶动画 |
 | v0.1.0 | 2026-06-29 | 基础框架：折叠/展开、CRUD、进度记录、归档、托盘 |
