@@ -262,6 +262,7 @@ class AppController(QObject):
         try:
             self._store.update_item(item)
             # item 已在 self._todos 中原地更新
+            self._refresh_views()  # 刷新搜索过滤等视图状态
             self._show_notification("进度已更新")
         except StoreError as e:
             entry.text = old_text  # 回滚内存状态

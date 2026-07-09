@@ -237,14 +237,16 @@ class ProgressWidget(QWidget):
         """双击进度文本 → 弹出输入框编辑"""
         entry_id = text_label.property("entry_id")
         if not entry_id:
+            event.accept()
             return
 
         # 找到对应的 ProgressEntry
         entry = next((p for p in self._entries if p.id == entry_id), None)
         if not entry:
+            event.accept()
             return
 
-        # 弹出编辑对话框
+        # 弹出编辑对话框（QInputDialog 进入嵌套事件循环，此时搜索防抖定时器等可能触发并销毁卡片）
         new_text, ok = QInputDialog.getText(
             self.window() or self,
             "编辑进度",
@@ -253,10 +255,13 @@ class ProgressWidget(QWidget):
             entry.text,
         )
         if ok and new_text.strip() and new_text.strip() != entry.text:
-            # 更新 UI
-            text_label.setFullText(new_text.strip())
-            # 发射编辑信号（由控制器持久化）
-            self.signal_progress_edited.emit(entry_id, new_text.strip())
+            try:
+                # 防御：嵌套事件循环期间 text_label 可能已被 deleteLater 销毁
+                text_label.setFullText(new_text.strip())
+                self.signal_progress_edited.emit(entry_id, new_text.strip())
+            except RuntimeError:
+                # widget 已被销毁，由控制器后续的 _refresh_views 刷新
+                pass
 
         event.accept()
 
