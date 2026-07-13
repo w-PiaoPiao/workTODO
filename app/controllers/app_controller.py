@@ -592,9 +592,10 @@ class AppController(QObject):
                     app_path = QApplication.instance().applicationFilePath()
                     app_path = f'"{app_path}"'  # 引号包裹，防止路径含空格
                 else:
-                    # 源码开发模式：使用 python main.py
+                    # 源码开发模式：使用 pythonw main.py（避免开机弹 cmd 窗口）
                     script = Path(__file__).resolve().parent.parent.parent / "main.py"
-                    app_path = f'"{sys.executable}" "{script}"'
+                    pythonw = Path(sys.executable).with_name("pythonw.exe")
+                    app_path = f'"{pythonw}" "{script}"'
                 reg.setValue(self.REG_ENTRY, app_path)
                 logger.info("开机自启写入注册表: %s = %s", self.REG_ENTRY, app_path)
             else:

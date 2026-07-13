@@ -359,10 +359,9 @@ class ExpandedView(QFrame):
             card.signal_title_changed.connect(self.signal_title_changed.emit)
             card.signal_progress_edited.connect(self.signal_progress_edited.emit)
             card.signal_progress_deleted.connect(self.signal_progress_deleted.emit)
-            # 进度展开/收起监听（使用 UniqueConnection 防止重复连接）
+            # 进度展开/收起监听
             card.progress_toggled_signal.connect(
                 lambda show_all, c=card: self._on_progress_toggle(c, show_all),
-                Qt.UniqueConnection,
             )
             self._list_layout.insertWidget(self._list_layout.count() - 1, card)
 
