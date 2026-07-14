@@ -588,9 +588,12 @@ class AppController(QObject):
             if enabled:
                 # 获取当前可执行文件路径
                 if getattr(sys, "frozen", False):
-                    # PyInstaller 打包模式
-                    app_path = QApplication.instance().applicationFilePath()
-                    app_path = f'"{app_path}"'  # 引号包裹，防止路径含空格
+                    # PyInstaller 打包模式：使用 VBS 脚本包装，避免开机弹 cmd 窗口
+                    exe_path = QApplication.instance().applicationFilePath()
+                    vbs_path = AppConfig.DATA_DIR / "startup.vbs"
+                    vbs_content = f'CreateObject("WScript.Shell").Run """{exe_path}""", 0, False'
+                    vbs_path.write_text(vbs_content, encoding="utf-8-sig")
+                    app_path = f'"{vbs_path}"'
                 else:
                     # 源码开发模式：使用 pythonw main.py（避免开机弹 cmd 窗口）
                     script = Path(__file__).resolve().parent.parent.parent / "main.py"
@@ -600,6 +603,9 @@ class AppController(QObject):
                 logger.info("开机自启写入注册表: %s = %s", self.REG_ENTRY, app_path)
             else:
                 reg.remove(self.REG_ENTRY)
+                vbs_path = AppConfig.DATA_DIR / "startup.vbs"
+                if vbs_path.exists():
+                    vbs_path.unlink()
                 logger.info("已从注册表移除开机自启条目: %s", self.REG_ENTRY)
             reg.sync()
             self._expanded_view.set_autostart(enabled)
