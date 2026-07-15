@@ -497,6 +497,7 @@ class AppController(QObject):
             self._on_tray_show()
 
     def _on_tray_show(self) -> None:
+        self._window.ensure_visible()
         self._window.show()
         self._window.raise_()
         self._window.activateWindow()

@@ -64,6 +64,13 @@ class AppConfig:
     SEARCH_DEBOUNCE_MS = 300    # 搜索防抖毫秒
     NOTIFICATION_DURATION_MS = 2000  # 通知显示时长
 
+    # ── 贴顶隐藏 ──────────────────────────────────────────────
+    STICK_TO_TOP_PEEK_HEIGHT = 6    # 隐藏后露出的像素高度
+    STICK_TO_TOP_THRESHOLD = 10     # 判定"贴顶部"的阈值（像素）
+    STICK_RESTORE_Y_MARGIN = 6      # 恢复时距屏幕顶部的像素（标题栏完整可见）
+    STICK_HOVER_DELAY_MS = 150      # 鼠标悬停后弹出的延迟（毫秒）
+    STICK_HIDE_DELAY_MS = 500       # 鼠标离开后隐藏的延迟（毫秒）
+
     # ── 颜色（浅色） ──────────────────────────────────────────
     COLORS = {
         "bg_primary": "#F3F3F3",

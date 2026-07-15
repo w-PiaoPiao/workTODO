@@ -6,13 +6,14 @@
 - 折叠/展开双模式切换（带动画）
 - 自动吸附屏幕边缘
 - 位置持久化（QSettings）
+- 贴顶隐藏：拖拽到屏幕顶部自动收起，鼠标靠近后恢复
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, Signal, QPoint, QSize, QSettings
+from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, Signal, QPoint, QSize, QSettings, QTimer, QEvent
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget, QApplication
-from PySide6.QtGui import QMouseEvent, QScreen
+from PySide6.QtGui import QMouseEvent, QScreen, QCursor
 
 from app.config import AppConfig
 from app.views.theme import AppTheme
@@ -41,6 +42,20 @@ class MainWindow(QWidget):
         self._drag_pos = QPoint()
         self._is_dragging = False
         self._animation_running = False
+
+        # ── 贴顶隐藏状态 ──────────────────────────────────
+        self._stuck_to_top = False         # 是否处于贴顶模式
+        self._temporarily_visible = False  # 贴顶模式下是否临时展开
+        self._show_pending = False         # 是否有待执行的展开
+        self._restore_rect = QRect()       # 贴顶前的位置
+        self._stuck_screen_geo = QRect()   # 贴顶时的屏幕信息
+        self._stick_hover_timer = QTimer()
+        self._stick_hover_timer.setInterval(100)
+        self._stick_hover_timer.timeout.connect(self._on_stick_hover_check)
+        self._hide_timer = QTimer()
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.setInterval(AppConfig.STICK_HIDE_DELAY_MS)
+        self._hide_timer.timeout.connect(self._do_hide)
 
         # ── 子视图占位（由外部注入）───────────────────────
         self._collapsed_view: QWidget = None
@@ -128,14 +143,17 @@ class MainWindow(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._is_dragging and event.buttons() == Qt.LeftButton:
+            if self._stuck_to_top:
+                self._full_unstick()
             self.move(event.globalPosition().toPoint() - self._drag_pos)
             event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.LeftButton:
             self._is_dragging = False
-            self._snap_to_screen_edge()
-            self._save_position()
+            if not self._check_and_stick_to_top():
+                self._snap_to_screen_edge()
+                self._save_position()
             event.accept()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
@@ -239,9 +257,145 @@ class MainWindow(QWidget):
         if new_x != pos.x() or new_y != pos.y():
             self.move(new_x, new_y)
 
+    # ── 贴顶隐藏 ──────────────────────────────────────────
+
+    def _check_and_stick_to_top(self) -> bool:
+        """检查窗口是否靠近屏幕顶部边缘，是则贴顶隐藏"""
+        screen = self._current_screen()
+        if not screen:
+            return False
+        geo = screen.availableGeometry()
+        if self.pos().y() <= geo.top() + AppConfig.STICK_TO_TOP_THRESHOLD:
+            self._stick_to_top()
+            return True
+        return False
+
+    def _stick_to_top(self) -> None:
+        """贴顶部并隐藏（只露出底部一小条）"""
+        if self._stuck_to_top:
+            return
+        screen = self._current_screen()
+        if not screen:
+            return
+        geo = screen.availableGeometry()
+        # 保存恢复位置，y 距屏幕顶部留出间隙确保标题栏完整可见
+        restore_y = max(self.y(), geo.top() + AppConfig.STICK_RESTORE_Y_MARGIN)
+        self._restore_rect = QRect(self.x(), restore_y, self.width(), self.height())
+        self._stuck_screen_geo = geo
+        self._stuck_to_top = True
+        self._temporarily_visible = False
+
+        new_y = geo.top() - self.height() + AppConfig.STICK_TO_TOP_PEEK_HEIGHT
+        x = max(geo.left(), min(self.x(), geo.right() - self.width()))
+        self.move(x, new_y)
+
+        self._stick_hover_timer.start()
+
+    def _full_unstick(self) -> None:
+        """彻底取消贴顶隐藏（不移动窗口），拖拽时调用"""
+        if not self._stuck_to_top:
+            return
+        self._stuck_to_top = False
+        self._temporarily_visible = False
+        self._show_pending = False
+        self._stick_hover_timer.stop()
+        self._hide_timer.stop()
+
+    def _temporarily_show(self) -> None:
+        """临时展开窗口（鼠标悬停触发，离开后再次隐藏）"""
+        if not self._stuck_to_top or self._temporarily_visible:
+            return
+        self._temporarily_visible = True
+        self.move(self._restore_rect.topLeft())
+
+    def _schedule_hide(self) -> None:
+        """安排隐藏计时（鼠标离开窗口时调用）"""
+        if self._stuck_to_top and self._temporarily_visible:
+            self._hide_timer.start()
+
+    def _cancel_hide(self) -> None:
+        """取消待处理的隐藏"""
+        self._hide_timer.stop()
+
+    def _do_hide(self) -> None:
+        """执行隐藏回顶部"""
+        if not self._stuck_to_top or not self._temporarily_visible:
+            return
+        self._temporarily_visible = False
+        geo = self._stuck_screen_geo
+        restore_pos = self._restore_rect.topLeft()
+        new_y = geo.top() - self._restore_rect.height() + AppConfig.STICK_TO_TOP_PEEK_HEIGHT
+        self.move(restore_pos.x(), new_y)
+
+    def _on_stick_hover_check(self) -> None:
+        """定时检测鼠标位置，管理隐藏/展开状态"""
+        if not self._stuck_to_top or not self.isVisible():
+            return
+
+        cursor = QCursor.pos()
+        geo = self._stuck_screen_geo
+
+        if self._temporarily_visible:
+            # 临时展开状态：鼠标是否仍在窗口区域内
+            win_rect = QRect(self._restore_rect.topLeft(), self._restore_rect.size())
+            if win_rect.contains(cursor):
+                self._cancel_hide()
+            else:
+                self._schedule_hide()
+        else:
+            # 隐藏状态：鼠标是否进入顶部热区（延迟展开，避免误触）
+            if self._is_in_hot_zone(cursor, geo):
+                if not self._show_pending:
+                    self._show_pending = True
+                    QTimer.singleShot(AppConfig.STICK_HOVER_DELAY_MS, self._do_show)
+            else:
+                self._show_pending = False
+
+    def _is_in_hot_zone(self, cursor: QPoint, geo: QRect) -> bool:
+        """判断鼠标是否在屏幕顶部热区内"""
+        hot_zone_max_y = geo.top() + AppConfig.STICK_TO_TOP_PEEK_HEIGHT + 20
+        return (geo.top() - 5 <= cursor.y() <= hot_zone_max_y and
+                geo.left() <= cursor.x() <= geo.right())
+
+    def _do_show(self) -> None:
+        """延迟后执行展开（由定时器触发）"""
+        self._show_pending = False
+        if not self._stuck_to_top or self._temporarily_visible:
+            return
+        cursor = QCursor.pos()
+        if self._is_in_hot_zone(cursor, self._stuck_screen_geo):
+            self._temporarily_show()
+
+    def enterEvent(self, event: QEvent) -> None:
+        """鼠标进入窗口可见区域时临时展开"""
+        if self._stuck_to_top and not self._temporarily_visible:
+            if not self._show_pending:
+                self._show_pending = True
+                QTimer.singleShot(AppConfig.STICK_HOVER_DELAY_MS, self._do_show)
+        elif self._stuck_to_top and self._temporarily_visible:
+            self._cancel_hide()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        """鼠标离开窗口时安排隐藏"""
+        if self._stuck_to_top and self._temporarily_visible:
+            self._schedule_hide()
+        elif self._stuck_to_top and not self._temporarily_visible:
+            self._show_pending = False
+        super().leaveEvent(event)
+
+    def ensure_visible(self) -> None:
+        """确保窗口可见（若处于贴顶隐藏则彻底恢复）"""
+        if self._stuck_to_top:
+            self._full_unstick()
+            self.move(self._restore_rect.topLeft())
+
     def closeEvent(self, event):
-        # 关闭时保存位置
-        self._save_position()
-        # 发射信号，让控制器决定是退出还是最小化到托盘
+        if self._stuck_to_top:
+            settings = QSettings("Personal", "待办事项和便签")
+            settings.setValue("window/pos", self._restore_rect.topLeft())
+            self._full_unstick()
+        else:
+            self._save_position()
         self.signal_close_requested.emit()
         event.ignore()  # 不真正关闭，由控制器处理
