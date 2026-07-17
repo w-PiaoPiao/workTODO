@@ -40,6 +40,7 @@ class TodoCard(QFrame):
         self._item = item
         self._editing = False
         self._drag_start_pos = None  # 拖拽起始位置
+        self._all_collapsed = False  # 全部卡片折叠模式
 
         self._build_ui()
         self._populate(item)
@@ -357,6 +358,19 @@ class TodoCard(QFrame):
     def collapse_progress(self) -> None:
         """收起进度展开（封装对 ProgressWidget 的内部访问）"""
         self._progress_widget.collapse()
+
+    def set_all_collapsed(self, collapsed: bool) -> None:
+        """全部卡片折叠模式：隐藏进度区域和添加进度行，仅保留标题行"""
+        self._all_collapsed = collapsed
+        if collapsed:
+            self._progress_widget.setVisible(False)
+            self._progress_input.setVisible(False)
+            self._progress_btn.setVisible(False)
+        else:
+            self._progress_widget.setVisible(True)
+            visible = not self._item.is_completed
+            self._progress_input.setVisible(visible)
+            self._progress_btn.setVisible(visible)
 
     def reapply_theme(self) -> None:
         """重新应用当前主题样式（主题切换时调用，无需重建卡片）"""

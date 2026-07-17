@@ -53,6 +53,7 @@ class ExpandedView(QFrame):
         self._drop_indicator: QFrame | None = None  # 拖拽插入指示线
         self._drop_local_pos: QPoint | None = None  # 拖拽事件在容器坐标系下的位置（避免 monkey-patch event 对象）
         self._autostart = False  # 开机自启状态
+        self._all_collapsed = False  # 全部卡片折叠状态
 
         # 搜索防抖 —— 复用单个 timer，避免每次按键创建新对象
         self._search_timer = QTimer()
@@ -171,6 +172,13 @@ class ExpandedView(QFrame):
         self._pin_btn.setStyleSheet(AppTheme.pin_btn_style(True))
         self._pin_btn.clicked.connect(self.signal_toggle_pin.emit)
 
+        # 收起全部卡片按钮
+        self._collapse_cards_btn = QPushButton("⊟")
+        self._collapse_cards_btn.setFixedSize(28, 28)
+        self._collapse_cards_btn.setToolTip("收起全部卡片")
+        self._collapse_cards_btn.setStyleSheet(self._icon_btn_style())
+        self._collapse_cards_btn.clicked.connect(self._toggle_collapse_cards)
+
         # 折叠按钮
         self._collapse_btn = QPushButton("━")
         self._collapse_btn.setFixedSize(28, 28)
@@ -184,6 +192,7 @@ class ExpandedView(QFrame):
         layout.addWidget(self._theme_btn)
         layout.addWidget(self._search_btn)
         layout.addWidget(self._pin_btn)
+        layout.addWidget(self._collapse_cards_btn)
         layout.addWidget(self._collapse_btn)
         bar.setLayout(layout)
         return bar
@@ -202,6 +211,21 @@ class ExpandedView(QFrame):
         self._autostart_btn.setText("⚡" if enabled else "🔌")
         self._autostart_btn.setStyleSheet(self._autostart_btn_style(enabled))
         self._autostart_btn.setToolTip("点击关闭开机自启" if enabled else "点击开启开机自启")
+
+    def _toggle_collapse_cards(self) -> None:
+        """切换全部卡片的折叠/展开"""
+        self._all_collapsed = not self._all_collapsed
+        btn = self._collapse_cards_btn
+        if self._all_collapsed:
+            btn.setText("⊞")
+            btn.setToolTip("展开全部卡片")
+        else:
+            btn.setText("⊟")
+            btn.setToolTip("收起全部卡片")
+        for i in range(self._list_layout.count()):
+            w = self._list_layout.itemAt(i).widget()
+            if isinstance(w, TodoCard):
+                w.set_all_collapsed(self._all_collapsed)
 
     # ── 搜索栏 ──────────────────────────────────────────────
 
@@ -363,6 +387,9 @@ class ExpandedView(QFrame):
             card.progress_toggled_signal.connect(
                 lambda show_all, c=card: self._on_progress_toggle(c, show_all),
             )
+            # 全部卡片折叠模式
+            if self._all_collapsed:
+                card.set_all_collapsed(True)
             self._list_layout.insertWidget(self._list_layout.count() - 1, card)
 
     def _clear_list(self) -> None:
@@ -784,6 +811,7 @@ class ExpandedView(QFrame):
         self._theme_btn.setToolTip("切换深色模式" if not AppTheme.is_dark() else "切换浅色模式")
         self._search_btn.setStyleSheet(self._icon_btn_style())
         self._pin_btn.setStyleSheet(AppTheme.pin_btn_style(self._pinned))
+        self._collapse_cards_btn.setStyleSheet(self._icon_btn_style())
         self._collapse_btn.setStyleSheet(self._icon_btn_style())
 
         # ── 快速添加栏 ────────────────────────────────────
