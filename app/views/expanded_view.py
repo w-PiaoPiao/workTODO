@@ -222,10 +222,8 @@ class ExpandedView(QFrame):
         else:
             btn.setText("⊟")
             btn.setToolTip("收起全部卡片")
-        for i in range(self._list_layout.count()):
-            w = self._list_layout.itemAt(i).widget()
-            if isinstance(w, TodoCard):
-                w.set_all_collapsed(self._all_collapsed)
+        for w in self._iter_cards():
+            w.set_all_collapsed(self._all_collapsed)
 
     # ── 搜索栏 ──────────────────────────────────────────────
 
@@ -400,6 +398,13 @@ class ExpandedView(QFrame):
             widget = item.widget()
             if widget:
                 widget.deleteLater()
+
+    def _iter_cards(self):
+        """遍历列表中的所有 TodoCard（跳过 stretch 和状态标签）"""
+        for i in range(self._list_layout.count()):
+            w = self._list_layout.itemAt(i).widget()
+            if isinstance(w, TodoCard):
+                yield w
 
     # ── 状态显示 ──────────────────────────────────────────
 
@@ -577,14 +582,14 @@ class ExpandedView(QFrame):
         mouse_y = self._drop_pos(event).y()
         y = margin.top()
 
-        for i in range(self._list_layout.count()):
-            w = self._list_layout.itemAt(i).widget()
-            if w and w.property("todo_item_id") and w.isVisible():
-                card_rect = w.geometry()
-                mid = card_rect.top() + card_rect.height() // 2
-                if mouse_y <= mid:
-                    return card_rect.top()
-                y = card_rect.bottom() + 1
+        for w in self._iter_cards():
+            if not w.isVisible():
+                continue
+            card_rect = w.geometry()
+            mid = card_rect.top() + card_rect.height() // 2
+            if mouse_y <= mid:
+                return card_rect.top()
+            y = card_rect.bottom() + 1
 
         return y
 
@@ -621,18 +626,18 @@ class ExpandedView(QFrame):
         ordered: list[str] = []
         inserted = False
 
-        for i in range(self._list_layout.count()):
-            w = self._list_layout.itemAt(i).widget()
-            if w and w.property("todo_item_id") and w.isVisible():
-                card_id = w.property("todo_item_id")
-                if card_id == dragged_id:
-                    continue
-                card_rect = w.geometry()
-                mid = card_rect.top() + card_rect.height() // 2
-                if not inserted and mouse_pos.y() <= mid:
-                    ordered.append(dragged_id)
-                    inserted = True
-                ordered.append(card_id)
+        for w in self._iter_cards():
+            if not w.isVisible():
+                continue
+            card_id = w.property("todo_item_id")
+            if card_id == dragged_id:
+                continue
+            card_rect = w.geometry()
+            mid = card_rect.top() + card_rect.height() // 2
+            if not inserted and mouse_pos.y() <= mid:
+                ordered.append(dragged_id)
+                inserted = True
+            ordered.append(card_id)
 
         if not inserted:
             ordered.append(dragged_id)
@@ -644,12 +649,9 @@ class ExpandedView(QFrame):
 
     def _find_card(self, item_id: str):
         """按 item_id 查找卡片 widget"""
-        for i in range(self._list_layout.count()):
-            item = self._list_layout.itemAt(i)
-            if item and item.widget():
-                w = item.widget()
-                if w.property("todo_item_id") == item_id:
-                    return w
+        for w in self._iter_cards():
+            if w.property("todo_item_id") == item_id:
+                return w
         return None
 
     # ── 置顶动画 ────────────────────────────────────────
@@ -868,11 +870,9 @@ class ExpandedView(QFrame):
 
         # ── 更新卡片主题（无需重建，保留进度展开状态） ──
         has_cards = False
-        for i in range(self._list_layout.count()):
-            w = self._list_layout.itemAt(i).widget()
-            if isinstance(w, TodoCard):
-                w.reapply_theme()
-                has_cards = True
+        for w in self._iter_cards():
+            w.reapply_theme()
+            has_cards = True
 
         if not has_cards:
             # 空状态 / 无结果状态：需重建状态标签
