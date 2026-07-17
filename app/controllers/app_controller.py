@@ -139,6 +139,7 @@ class AppController(QObject):
         self._expanded_view.signal_progress_deleted.connect(self._on_delete_progress)
         self._expanded_view.signal_theme_toggled.connect(self._on_toggle_theme)
         self._expanded_view.signal_autostart_toggled.connect(self._on_toggle_autostart)
+        self._expanded_view.signal_opacity_changed.connect(self._on_opacity_changed)
 
         # 主窗口
         self._window.signal_close_requested.connect(self._on_close_requested)
@@ -518,11 +519,14 @@ class AppController(QObject):
     # ── 窗口状态管理 ──────────────────────────────────────
 
     def _restore_window_state(self) -> None:
-        """恢复窗口置顶状态并同步按钮"""
+        """恢复窗口置顶状态、透明度并同步按钮"""
         self._pinned = True  # 默认置顶
         settings = QSettings("Personal", "待办事项和便签")
         self._pinned = settings.value("window/pinned", True, type=bool)
         self._sync_pin_state()
+        opacity = settings.value("window/opacity", AppConfig.WINDOW_OPACITY_DEFAULT, type=float)
+        self._window.set_opacity(opacity)
+        self._expanded_view.set_opacity_value(opacity)
 
     def _on_toggle_pin(self) -> None:
         """切换窗口置顶并同步所有视图"""
@@ -614,6 +618,14 @@ class AppController(QObject):
         except Exception as e:
             logger.error("设置开机自启失败: %s", e)
             self._show_error(f"设置开机自启失败: {e}")
+
+    # ── 窗口透明度 ──────────────────────────────────────
+
+    def _on_opacity_changed(self, value: float) -> None:
+        """透明度值变化时更新窗口并持久化"""
+        self._window.set_opacity(value)
+        settings = QSettings("Personal", "待办事项和便签")
+        settings.setValue("window/opacity", value)
 
     # ── 键盘快捷键 ──────────────────────────────────────
 

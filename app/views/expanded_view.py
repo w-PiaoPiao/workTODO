@@ -11,10 +11,10 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Qt, QTimer, QEvent, QRect, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Signal, Qt, QTimer, QEvent, QPoint, QRect, QPropertyAnimation, QEasingCurve
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QScrollArea, QFrame, QSizePolicy, QSizeGrip, QApplication,
+    QLineEdit, QScrollArea, QFrame, QSizePolicy, QSizeGrip, QApplication, QSlider,
 )
 from app.config import AppConfig
 from app.views.theme import AppTheme
@@ -41,6 +41,7 @@ class ExpandedView(QFrame):
     signal_progress_deleted = Signal(str, str)  # item_id, entry_id
     signal_theme_toggled = Signal(bool)  # dark=True
     signal_autostart_toggled = Signal(bool)  # enabled=True
+    signal_opacity_changed = Signal(float)  # 0.0 ~ 1.0
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -54,6 +55,7 @@ class ExpandedView(QFrame):
         self._drop_local_pos: QPoint | None = None  # 拖拽事件在容器坐标系下的位置（避免 monkey-patch event 对象）
         self._autostart = False  # 开机自启状态
         self._all_collapsed = False  # 全部卡片折叠状态
+        self._opacity = AppConfig.WINDOW_OPACITY_DEFAULT
 
         # 搜索防抖 —— 复用单个 timer，避免每次按键创建新对象
         self._search_timer = QTimer()
@@ -110,6 +112,9 @@ class ExpandedView(QFrame):
         main_layout.addWidget(self._footer)
 
         self.setLayout(main_layout)
+
+        # ── 透明度滑块面板 ────────────────────────────
+        self._opacity_panel = self._make_opacity_panel()
 
         # ── 应用主题样式 ──────────────────────────────────
         self.reapply_theme()
@@ -179,6 +184,13 @@ class ExpandedView(QFrame):
         self._collapse_cards_btn.setStyleSheet(self._icon_btn_style())
         self._collapse_cards_btn.clicked.connect(self._toggle_collapse_cards)
 
+        # 透明度按钮
+        self._opacity_btn = QPushButton("🔮")
+        self._opacity_btn.setFixedSize(28, 28)
+        self._opacity_btn.setToolTip("调整窗口透明度")
+        self._opacity_btn.setStyleSheet(self._icon_btn_style())
+        self._opacity_btn.clicked.connect(self._toggle_opacity_panel)
+
         # 折叠按钮
         self._collapse_btn = QPushButton("━")
         self._collapse_btn.setFixedSize(28, 28)
@@ -193,6 +205,7 @@ class ExpandedView(QFrame):
         layout.addWidget(self._search_btn)
         layout.addWidget(self._pin_btn)
         layout.addWidget(self._collapse_cards_btn)
+        layout.addWidget(self._opacity_btn)
         layout.addWidget(self._collapse_btn)
         bar.setLayout(layout)
         return bar
@@ -212,6 +225,11 @@ class ExpandedView(QFrame):
         self._autostart_btn.setStyleSheet(self._autostart_btn_style(enabled))
         self._autostart_btn.setToolTip("点击关闭开机自启" if enabled else "点击开启开机自启")
 
+    def set_opacity_value(self, value: float) -> None:
+        """设置透明度值并同步滑块（由控制器调用，恢复持久化值）"""
+        self._opacity = value
+        self._opacity_slider.setValue(int(value * 100))
+
     def _toggle_collapse_cards(self) -> None:
         """切换全部卡片的折叠/展开"""
         self._all_collapsed = not self._all_collapsed
@@ -224,6 +242,71 @@ class ExpandedView(QFrame):
             btn.setToolTip("收起全部卡片")
         for w in self._iter_cards():
             w.set_all_collapsed(self._all_collapsed)
+
+    # ── 透明度控制 ─────────────────────────────────────────
+
+    def _make_opacity_panel(self) -> QFrame:
+        """创建透明度滑块弹出面板"""
+        panel = QFrame(self)
+        panel.setFixedSize(180, 44)
+        panel.setStyleSheet(f"""
+            QFrame {{
+                background: {AppTheme.C["bg_card"]};
+                border: 1px solid {AppTheme.C["border"]};
+                border-radius: 6px;
+            }}
+        """)
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(8)
+
+        self._opacity_label = QLabel("100%")
+        self._opacity_label.setStyleSheet(f"""
+            font: {AppTheme.FONT["small"]};
+            color: {AppTheme.C["text_primary"]};
+            background: transparent;
+            min-width: 36px;
+        """)
+
+        self._opacity_slider = QSlider(Qt.Horizontal)
+        self._opacity_slider.setRange(
+            int(AppConfig.WINDOW_OPACITY_MIN * 100),
+            int(AppConfig.WINDOW_OPACITY_MAX * 100),
+        )
+        self._opacity_slider.setValue(int(self._opacity * 100))
+        self._opacity_slider.setFixedWidth(110)
+        self._opacity_slider.valueChanged.connect(self._on_opacity_slider_changed)
+
+        layout.addWidget(self._opacity_label)
+        layout.addWidget(self._opacity_slider)
+        panel.hide()
+        return panel
+
+    def _on_opacity_slider_changed(self, value: int) -> None:
+        """滑块值变化时实时更新透明度和显示"""
+        opacity = value / 100.0
+        self._opacity = opacity
+        self._opacity_label.setText(f"{value}%")
+        self.signal_opacity_changed.emit(opacity)
+
+    def _toggle_opacity_panel(self) -> None:
+        """切换透明度面板的显示/隐藏"""
+        if self._opacity_panel.isVisible():
+            self._hide_opacity_panel()
+            return
+
+        btn_pos = self._opacity_btn.mapTo(self, QPoint(0, 0))
+        panel_x = btn_pos.x() + self._opacity_btn.width() - self._opacity_panel.width()
+        panel_y = btn_pos.y() + self._opacity_btn.height() + 2
+        self._opacity_panel.move(panel_x, panel_y)
+        self._opacity_panel.show()
+        self._opacity_panel.raise_()
+        QApplication.instance().installEventFilter(self)
+
+    def _hide_opacity_panel(self) -> None:
+        """隐藏透明度面板并清理事件过滤器"""
+        self._opacity_panel.hide()
+        QApplication.instance().removeEventFilter(self)
 
     # ── 搜索栏 ──────────────────────────────────────────────
 
@@ -460,10 +543,25 @@ class ExpandedView(QFrame):
     # ── 事件过滤器：点击外部收起进度 + 拖放排序 ──────────
 
     def eventFilter(self, obj, event) -> bool:
-        """合并事件路由：标题栏双击折叠 + 点击外部收起进度 + 拖放排序"""
+        """合并事件路由：标题栏双击折叠 + 透明度面板关闭 + 点击外部收起进度 + 拖放排序"""
         # 构造完成前所有事件直接透传（_build_ui 中事件可能先于属性初始化触发）
         if not self._built:
             return super().eventFilter(obj, event)
+
+        # 透明度面板：点击外部区域关闭
+        if (event.type() == QEvent.MouseButtonPress
+                and self._opacity_panel.isVisible()):
+            global_pos = event.globalPosition().toPoint()
+            panel_rect = QRect(
+                self._opacity_panel.mapToGlobal(QPoint(0, 0)),
+                self._opacity_panel.size(),
+            )
+            btn_rect = QRect(
+                self._opacity_btn.mapToGlobal(QPoint(0, 0)),
+                self._opacity_btn.size(),
+            )
+            if not panel_rect.contains(global_pos) and not btn_rect.contains(global_pos):
+                self._hide_opacity_panel()
 
         # 标题栏双击 → 折叠
         if obj is self._title_bar and event.type() == QEvent.MouseButtonDblClick:
@@ -814,6 +912,7 @@ class ExpandedView(QFrame):
         self._search_btn.setStyleSheet(self._icon_btn_style())
         self._pin_btn.setStyleSheet(AppTheme.pin_btn_style(self._pinned))
         self._collapse_cards_btn.setStyleSheet(self._icon_btn_style())
+        self._opacity_btn.setStyleSheet(self._icon_btn_style())
         self._collapse_btn.setStyleSheet(self._icon_btn_style())
 
         # ── 快速添加栏 ────────────────────────────────────
@@ -866,6 +965,21 @@ class ExpandedView(QFrame):
             QPushButton:hover {{
                 background: {C["danger"]}; color: white;
             }}
+        """)
+
+        # ── 透明度面板 ──────────────────────────────────
+        self._opacity_panel.setStyleSheet(f"""
+            QFrame {{
+                background: {C["bg_card"]};
+                border: 1px solid {C["border"]};
+                border-radius: 6px;
+            }}
+        """)
+        self._opacity_label.setStyleSheet(f"""
+            font: {AppTheme.FONT["small"]};
+            color: {C["text_primary"]};
+            background: transparent;
+            min-width: 36px;
         """)
 
         # ── 更新卡片主题（无需重建，保留进度展开状态） ──

@@ -2,7 +2,7 @@
 
 > Windows 桌面悬浮待办事项软件 — 像便利贴一样悬浮在桌面，支持深色/浅色主题、进度追踪、卡片排序。
 
-![Python](https://img.shields.io/badge/Python-3.12-blue) ![PySide6](https://img.shields.io/badge/PySide6-6.11%2B-green) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey) ![Version](https://img.shields.io/badge/Version-0.2.1-orange)
+![Python](https://img.shields.io/badge/Python-3.12-blue) ![PySide6](https://img.shields.io/badge/PySide6-6.11%2B-green) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey) ![Version](https://img.shields.io/badge/Version-0.3.0-orange)
 
 ---
 
@@ -30,6 +30,7 @@
 | ⌨️ **键盘快捷键** | Ctrl+N 新建、Ctrl+F 搜索、Esc 折叠 |
 | 🖥️ **多显示器** | 自动吸附当前所在屏幕边界 |
 | 🔒 **单实例** | 防止同时打开多个窗口 |
+| 🔮 **窗口透明度** | 标题栏按钮弹出滑块，实时调整窗口透明度（30%~100%） |
 
 ## 📷 效果预览
 
@@ -39,7 +40,7 @@
 └─────────────────────────────────────┘
 
 ┌─────────────────────────────────────────┐
-│ 待办事项                 [⚡][🌙][🔍]  │
+│ 待办事项      [⚡][🌙][🔍][📌][🔮][━] │
 │ ┌─────────────────────────────────────┐ │
 │ │ 快速添加新待办...              [＋]│ │
 │ └─────────────────────────────────────┘ │
@@ -95,12 +96,11 @@ python main.py --debug
 pip install pyinstaller>=6.21
 
 pyinstaller --onefile --windowed \
-    --name "待办事项和便签v0.2.1" \
+    --name "待办事项和便签v0.3.0" \
     --clean --noconfirm \
     main.py
-```
 
-产物位于 `dist/待办事项和便签v0.2.1.exe`（约 46 MB，含 PySide6 完整运行时）。
+产物位于 `dist/待办事项和便签v0.3.0.exe`（约 46 MB，含 PySide6 完整运行时）。
 
 ## 📖 使用指南
 
@@ -122,6 +122,7 @@ pyinstaller --onefile --windowed \
 | **置顶卡片** | 点击卡片上的 [↑] |
 | **切换主题** | 标题栏 [🌙/☀️] 按钮 |
 | **设置开机自启** | 标题栏 [⚡] 按钮 |
+| **窗口透明度** | 标题栏 [🔮] 按钮，拖动滑块调整 |
 | **窗口置顶** | 标题栏 [📌] 按钮 |
 | **折叠/展开** | 双击标题栏空白，或 [━] 按钮 |
 | **查看归档** | 页脚 [📦 查看归档] |
@@ -201,6 +202,7 @@ pyinstaller --onefile --windowed \
 
 | 版本 | 日期 | 主要内容 |
 |------|------|----------|
+| v0.3.0 | 2026-07-17 | 窗口透明度调节（🔮 弹出滑块面板）、全部卡片一键折叠/展开（⊟/⊞） |
 | v0.2.1 | 2026-07-09 | 进度条目编辑/删除，双击折叠限制在标题栏，开机自启 bug 修复 |
 | v0.2.0 | 2026-07-07 | 深色/浅色主题，内联编辑，开机自启，拖拽排序增强，多显示器支持，事件过滤器重构，O(N²) 性能修复 |
 | v0.1.1 | 2026-06-30 | 进度条折叠/展开、卡片拖拽排序、置顶动画 |

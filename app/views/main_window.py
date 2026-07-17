@@ -390,6 +390,10 @@ class MainWindow(QWidget):
             self._full_unstick()
             self.move(self._restore_rect.topLeft())
 
+    def set_opacity(self, value: float) -> None:
+        """设置窗口透明度 (0.0 ~ 1.0)"""
+        self.setWindowOpacity(value)
+
     def closeEvent(self, event):
         if self._stuck_to_top:
             settings = QSettings("Personal", "待办事项和便签")

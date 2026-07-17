@@ -14,7 +14,7 @@ class AppConfig:
 
     # 应用信息
     APP_NAME = "待办事项和便签"
-    APP_VERSION = "0.2.1"
+    APP_VERSION = "0.3.0"
 
     # ── 数据路径 ──────────────────────────────────────────────
     # 数据存储目录：优先使用环境变量覆盖，默认在用户数据目录下
@@ -63,6 +63,11 @@ class AppConfig:
     MAX_PROGRESS_COLLAPSED = 3  # 进度条折叠阈值
     SEARCH_DEBOUNCE_MS = 300    # 搜索防抖毫秒
     NOTIFICATION_DURATION_MS = 2000  # 通知显示时长
+
+    # ── 窗口透明度 ──────────────────────────────────────────────
+    WINDOW_OPACITY_DEFAULT = 1.0     # 默认完全不透明
+    WINDOW_OPACITY_MIN = 0.3         # 最小透明度
+    WINDOW_OPACITY_MAX = 1.0         # 最大透明度
 
     # ── 贴顶隐藏 ──────────────────────────────────────────────
     STICK_TO_TOP_PEEK_HEIGHT = 6    # 隐藏后露出的像素高度
