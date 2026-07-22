@@ -71,8 +71,9 @@ class MainWindow(QWidget):
         layout.addWidget(self._stack)
         self.setLayout(layout)
 
-        # ── 应用全局样式 ──────────────────────────────────
+        # ── 应用全局样式 + 注册主题监听 ──────────────────
         self.setStyleSheet(AppTheme.global_qss())
+        AppTheme.register(lambda: self.setStyleSheet(AppTheme.global_qss()))
 
         # ── 默认尺寸 ──────────────────────────────────────
         self._collapsed_size = QSize(AppConfig.COLLAPSED_WIDTH, AppConfig.COLLAPSED_HEIGHT)

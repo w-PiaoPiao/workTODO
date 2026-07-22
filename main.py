@@ -24,16 +24,26 @@ def main():
 
     # ── 启动 Qt 应用 ──────────────────────────────────────
     from PySide6.QtWidgets import QApplication
-    from PySide6.QtCore import Qt, QSharedMemory
+    from PySide6.QtCore import Qt
 
     app = QApplication(sys.argv)
     app.setApplicationName("待办事项和便签")
     app.setOrganizationName("Personal")
     app.setQuitOnLastWindowClosed(False)
 
-    # ── 单实例锁：防止同时打开多个窗口 ────────────────────
-    _lock = QSharedMemory("待办事项和便签-SingleInstanceLock")
-    if not _lock.create(1):
+    # ── 单实例锁（QLockFile：进程崩溃后自动释放，无残留问题） ─
+    from pathlib import Path
+    from PySide6.QtCore import QLockFile
+    from app.config import AppConfig
+
+    _lock_file_path = AppConfig.DATA_DIR / "instance.lock"
+    try:
+        AppConfig.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        logging.warning("创建数据目录失败: %s", e)
+    _lock = QLockFile(str(_lock_file_path))
+    _lock.setStaleLockTime(5000)  # 5s 过期，兼顾开发调试与崩溃恢复
+    if not _lock.tryLock(100):
         # 已有实例在运行，直接退出
         sys.exit(0)
 

@@ -71,19 +71,19 @@ class TodoCard(QFrame):
         self._sticky_btn = QPushButton("↑")
         self._sticky_btn.setFixedSize(24, 24)
         self._sticky_btn.setToolTip("置顶")
-        self._sticky_btn.setStyleSheet(self._sticky_btn_style(False))
+        self._sticky_btn.setStyleSheet(AppTheme.toggle_btn(False))
         self._sticky_btn.clicked.connect(self._on_toggle_sticky)
 
         self._complete_btn = QPushButton("办结")
         self._complete_btn.setFixedSize(40, 24)
         self._complete_btn.setToolTip("标记为已完成")
-        self._complete_btn.setStyleSheet(self._action_btn_style())
+        self._complete_btn.setStyleSheet(AppTheme.outline_btn())
         self._complete_btn.clicked.connect(self._on_complete)
 
         self._delete_btn = QPushButton("✕")
         self._delete_btn.setFixedSize(24, 24)
         self._delete_btn.setToolTip("删除")
-        self._delete_btn.setStyleSheet(self._delete_btn_style())
+        self._delete_btn.setStyleSheet(AppTheme.danger_btn())
         self._delete_btn.clicked.connect(self._on_delete)
 
         top_row.addWidget(self._title_label, stretch=1)
@@ -110,35 +110,13 @@ class TodoCard(QFrame):
 
         self._progress_input = QLineEdit()
         self._progress_input.setPlaceholderText("添加进度...")
-        self._progress_input.setStyleSheet(f"""
-            QLineEdit {{
-                border: none;
-                font: {AppTheme.FONT["small"]};
-                color: {AppTheme.C["text_secondary"]};
-                padding: 2px 4px;
-                background: transparent;
-            }}
-            QLineEdit:focus {{
-                color: {AppTheme.C["text_primary"]};
-            }}
-        """)
+        self._progress_input.setStyleSheet(AppTheme.progress_input_style())
         self._progress_input.returnPressed.connect(self._on_progress_submit)
 
         self._progress_btn = QPushButton("＋")
         self._progress_btn.setFixedSize(20, 20)
         self._progress_btn.setToolTip("添加进度")
-        self._progress_btn.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 12px;
-                color: {AppTheme.C["text_disabled"]};
-                border: none;
-                padding: 0;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                color: {AppTheme.C["accent"]};
-            }}
-        """)
+        self._progress_btn.setStyleSheet(AppTheme.icon_btn("12px"))
         self._progress_btn.clicked.connect(self._on_progress_submit)
 
         progress_row.addWidget(self._progress_input, stretch=1)
@@ -170,7 +148,7 @@ class TodoCard(QFrame):
         self.setToolTip(item.title)
 
         # 置顶状态
-        self._sticky_btn.setStyleSheet(self._sticky_btn_style(item.sticky))
+        self._sticky_btn.setStyleSheet(AppTheme.toggle_btn(item.sticky))
 
         # 填充进度
         self._progress_widget.set_entries(item.progress)
@@ -276,12 +254,7 @@ class TodoCard(QFrame):
         self._editing = True
 
         self._edit_input = QLineEdit(self._item.title)
-        self._edit_input.setStyleSheet(f"""
-            border: 1px solid {AppTheme.C["accent"]};
-            border-radius: 3px;
-            padding: 2px 6px;
-            font: {AppTheme.FONT["body"]};
-        """)
+        self._edit_input.setStyleSheet(AppTheme.edit_input_style())
         self._edit_input.selectAll()
 
         # 替换标题标签为输入框（使用保存的 _title_row 引用）
@@ -402,35 +375,13 @@ class TodoCard(QFrame):
             """)
 
         # 按钮样式
-        self._sticky_btn.setStyleSheet(self._sticky_btn_style(item.sticky))
-        self._complete_btn.setStyleSheet(self._action_btn_style())
-        self._delete_btn.setStyleSheet(self._delete_btn_style())
+        self._sticky_btn.setStyleSheet(AppTheme.toggle_btn(item.sticky))
+        self._complete_btn.setStyleSheet(AppTheme.outline_btn())
+        self._delete_btn.setStyleSheet(AppTheme.danger_btn())
 
         # 进度输入区域
-        self._progress_input.setStyleSheet(f"""
-            QLineEdit {{
-                border: none;
-                font: {AppTheme.FONT["small"]};
-                color: {C["text_secondary"]};
-                padding: 2px 4px;
-                background: transparent;
-            }}
-            QLineEdit:focus {{
-                color: {C["text_primary"]};
-            }}
-        """)
-        self._progress_btn.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 12px;
-                color: {C["text_disabled"]};
-                border: none;
-                padding: 0;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                color: {C["accent"]};
-            }}
-        """)
+        self._progress_input.setStyleSheet(AppTheme.progress_input_style())
+        self._progress_btn.setStyleSheet(AppTheme.icon_btn("12px"))
 
         # 进度子组件（轻量重建）
         self._progress_widget.reapply_theme()
@@ -440,55 +391,4 @@ class TodoCard(QFrame):
         """进度展开/收起信号"""
         return self._progress_widget.signal_show_all_changed
 
-    # ── 样式 ──────────────────────────────────────────────
 
-    @staticmethod
-    def _sticky_btn_style(sticky: bool) -> str:
-        C = AppTheme.C
-        color = C["accent"] if sticky else C["text_disabled"]
-        return f"""
-            QPushButton {{
-                font-size: 14px;
-                color: {color};
-                border: none;
-                padding: 0;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                color: {C["accent"]};
-            }}
-        """
-
-    @staticmethod
-    def _action_btn_style() -> str:
-        C = AppTheme.C
-        return f"""
-            QPushButton {{
-                font: {AppTheme.FONT["small"]};
-                color: {C["accent"]};
-                border: 1px solid {C["accent"]};
-                border-radius: 3px;
-                padding: 2px 6px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: {C["accent"]};
-                color: white;
-            }}
-        """
-
-    @staticmethod
-    def _delete_btn_style() -> str:
-        C = AppTheme.C
-        return f"""
-            QPushButton {{
-                font-size: 12px;
-                color: {C["text_disabled"]};
-                border: none;
-                padding: 0;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                color: {C["danger"]};
-            }}
-        """

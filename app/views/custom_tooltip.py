@@ -196,11 +196,16 @@ class _TooltipEventFilter(QObject):
 
 def install_custom_tooltip(app: QApplication) -> None:
     """在 QApplication 上安装自定义 tooltip 事件过滤器"""
+    from app.views.theme import AppTheme
+
     # 必须保留 Python 引用，否则 PySide6 wrapper 可能被 GC，
     # 导致 installEventFilter 注册的 C++ 对象失效。
     f = _TooltipEventFilter(app)
     _installed_filters.append(f)
     app.installEventFilter(f)
+
+    # 注册主题监听
+    AppTheme.register(CustomTooltip.apply_theme_style)
 
 
 # 模块级容器，保持已安装的 filter 对象存活

@@ -2,7 +2,7 @@
 
 > Windows 桌面悬浮待办事项软件 — 像便利贴一样悬浮在桌面，支持深色/浅色主题、进度追踪、卡片排序。
 
-![Python](https://img.shields.io/badge/Python-3.12-blue) ![PySide6](https://img.shields.io/badge/PySide6-6.11%2B-green) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey) ![Version](https://img.shields.io/badge/Version-0.3.0-orange)
+![Python](https://img.shields.io/badge/Python-3.12-blue) ![PySide6](https://img.shields.io/badge/PySide6-6.11%2B-green) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey) ![Version](https://img.shields.io/badge/Version-0.3.1-orange)
 
 ---
 
@@ -96,11 +96,11 @@ python main.py --debug
 pip install pyinstaller>=6.21
 
 pyinstaller --onefile --windowed \
-    --name "待办事项和便签v0.3.0" \
+    --name "待办事项和便签v0.3.1" \
     --clean --noconfirm \
     main.py
 
-产物位于 `dist/待办事项和便签v0.3.0.exe`（约 46 MB，含 PySide6 完整运行时）。
+产物位于 `dist/待办事项和便签v0.3.1.exe`（约 46 MB，含 PySide6 完整运行时）。
 
 ## 📖 使用指南
 
@@ -162,15 +162,21 @@ pyinstaller --onefile --windowed \
 │   ├── controllers/
 │   │   └── app_controller.py     # 控制器（信号连接、业务逻辑）
 │   └── views/
-│       ├── theme.py              # 主题/样式系统（浅色+深色）
+│       ├── theme.py              # 主题/样式系统（通用按钮工厂）
 │       ├── main_window.py        # 主窗口（无边框、置顶、动画）
 │       ├── collapsed_view.py     # 折叠模式视图
 │       ├── expanded_view.py      # 展开模式视图
+│       ├── title_bar.py          # 标题栏组件（功能按钮组）
+│       ├── drag_drop_manager.py  # 拖放排序管理器
 │       ├── todo_card.py          # 待办卡片组件（拖拽+内联编辑）
 │       ├── progress_widget.py    # 进度条目组件（展开/折叠）
 │       ├── elided_label.py       # 文本溢出省略标签
 │       ├── custom_tooltip.py     # 自定义 tooltip（跟随主题）
 │       └── archive_dialog.py     # 归档查看对话框
+├── tests/                        # 自动化测试
+│   ├── test_todo_item.py         # 数据模型测试
+│   ├── test_todo_store.py        # 存储层测试
+│   └── conftest.py               # 测试 fixtures
 └── data/                         # 运行时数据（自动创建）
 ```
 
@@ -202,6 +208,7 @@ pyinstaller --onefile --windowed \
 
 | 版本 | 日期 | 主要内容 |
 |------|------|----------|
+| v0.3.1 | 2026-07-22 | 代码架构优化：ExpandedView 拆分、主题观察者、差异化刷新、QLockFile 单实例锁、33 项自动化测试 |
 | v0.3.0 | 2026-07-17 | 窗口透明度调节（🔮 弹出滑块面板）、全部卡片一键折叠/展开（⊟/⊞） |
 | v0.2.1 | 2026-07-09 | 进度条目编辑/删除，双击折叠限制在标题栏，开机自启 bug 修复 |
 | v0.2.0 | 2026-07-07 | 深色/浅色主题，内联编辑，开机自启，拖拽排序增强，多显示器支持，事件过滤器重构，O(N²) 性能修复 |

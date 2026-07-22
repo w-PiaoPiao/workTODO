@@ -31,19 +31,28 @@ class ClickableElidedLabel(ElidedLabel):
         self.setCursor(Qt.IBeamCursor)
 
     def mousePressEvent(self, event) -> None:
-        event.accept()
+        if event.button() == Qt.LeftButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
-        event.accept()
+        if event.buttons() == Qt.LeftButton:
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
-        event.accept()
+        if event.button() == Qt.LeftButton:
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
-        if self._on_double_click:
+        if event.button() == Qt.LeftButton and self._on_double_click:
             self._on_double_click(event)
         else:
-            event.accept()
+            super().mouseDoubleClickEvent(event)
 
 
 class ProgressWidget(QWidget):
@@ -211,18 +220,7 @@ class ProgressWidget(QWidget):
         delete_btn.setFixedSize(18, 18)
         delete_btn.setToolTip("删除此进度")
         delete_btn.setProperty("entry_id", entry.id)
-        delete_btn.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 10px;
-                color: {AppTheme.C["text_disabled"]};
-                border: none;
-                padding: 0;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                color: {AppTheme.C["danger"]};
-            }}
-        """)
+        delete_btn.setStyleSheet(AppTheme.danger_btn("10px"))
         delete_btn.clicked.connect(self._on_delete_entry)
 
         layout.addWidget(time_label)

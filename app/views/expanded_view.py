@@ -20,6 +20,8 @@ from app.config import AppConfig
 from app.views.theme import AppTheme
 from app.models.todo_item import TodoItem
 from app.views.todo_card import TodoCard
+from app.views.title_bar import TitleBar
+from app.views.drag_drop_manager import DragDropManager
 
 
 class ExpandedView(QFrame):
@@ -47,12 +49,13 @@ class ExpandedView(QFrame):
         super().__init__(parent)
 
         self._items: list[TodoItem] = []
+        self._card_map: dict[str, TodoCard] = {}  # item_id → TodoCard（避免每次刷新重建）
         self._search_active = False
         self._search_query = ""
         self._pinned = True  # 默认置顶
-        self._progress_expanded_card: QWidget | None = None  # 当前展开进度的卡片
-        self._drop_indicator: QFrame | None = None  # 拖拽插入指示线
-        self._drop_local_pos: QPoint | None = None  # 拖拽事件在容器坐标系下的位置（避免 monkey-patch event 对象）
+        self._progress_expanded_card_id: str | None = None  # 当前展开进度的卡片 item_id
+        self._drag_mgr = DragDropManager()
+        self._drag_mgr.signal_reorder_items.connect(self.signal_reorder_items.emit)
         self._autostart = False  # 开机自启状态
         self._all_collapsed = False  # 全部卡片折叠状态
         self._opacity = AppConfig.WINDOW_OPACITY_DEFAULT
@@ -64,6 +67,7 @@ class ExpandedView(QFrame):
 
         self._built = False  # 标记是否已完成构造，防止 _build_ui 中事件过滤器访问未初始化的属性
         self._build_ui()
+        AppTheme.register(self.reapply_theme)
 
     def _build_ui(self) -> None:
         # ── 自身样式 ──────────────────────────────────────
@@ -81,7 +85,14 @@ class ExpandedView(QFrame):
         main_layout.setSpacing(0)
 
         # ── 标题栏 ────────────────────────────────────────
-        self._title_bar = self._make_title_bar()
+        self._title_bar = TitleBar()
+        self._title_bar.signal_collapse_clicked.connect(self.signal_collapse_clicked.emit)
+        self._title_bar.signal_autostart_toggled.connect(self.signal_autostart_toggled.emit)
+        self._title_bar.signal_theme_toggled.connect(self.signal_theme_toggled.emit)
+        self._title_bar.signal_search_clicked.connect(self._toggle_search)
+        self._title_bar.signal_toggle_pin.connect(self.signal_toggle_pin.emit)
+        self._title_bar.signal_collapse_cards_toggled.connect(self._toggle_collapse_cards)
+        self._title_bar.signal_opacity_clicked.connect(self._toggle_opacity_panel)
         main_layout.addWidget(self._title_bar)
 
         # ── 快速添加栏 ────────────────────────────────────
@@ -94,7 +105,6 @@ class ExpandedView(QFrame):
         self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         self._list_container = QWidget()
-        self._list_container.setAcceptDrops(True)  # 接受拖放排序
         self._list_layout = QVBoxLayout()
         self._list_layout.setContentsMargins(12, 8, 12, 8)
         self._list_layout.setSpacing(6)
@@ -104,6 +114,13 @@ class ExpandedView(QFrame):
         # 滚动区域视口也要监听拖拽事件（scroll area 的视口会拦截事件）
         self._scroll_area.viewport().installEventFilter(self)
         self._scroll_area.setWidget(self._list_container)
+
+        # 安装拖放排序管理器
+        self._drag_mgr.install(
+            self._list_container, self._list_layout, self._scroll_area,
+            iter_cards=self._iter_cards,
+            is_searching=lambda: bool(self._search_query),
+        )
 
         main_layout.addWidget(self._scroll_area, stretch=1)
 
@@ -121,109 +138,12 @@ class ExpandedView(QFrame):
 
         self._built = True
 
-    # ── 标题栏 ────────────────────────────────────────────
-
-    def _make_title_bar(self) -> QWidget:
-        bar = QWidget()
-        bar.setFixedHeight(40)
-        bar.setStyleSheet(f"""
-            background: {AppTheme.C["bg_primary"]};
-            border-bottom: 1px solid {AppTheme.C["border"]};
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-        """)
-        # 先在实例变量中保存引用，再安装事件过滤器（防止 setLayout 触发布局事件时 eventFilter 访问未初始化的 self._title_bar）
-        self._title_bar = bar
-        bar.installEventFilter(self)
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(12, 0, 8, 0)
-
-        title = QLabel("待办事项")
-        title.setStyleSheet(f"""
-            font: {AppTheme.FONT["title"]};
-            background: transparent;
-        """)
-
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        spacer.setStyleSheet("background: transparent;")
-
-        # 开机自启按钮（在主题切换按钮左边）
-        self._autostart_btn = QPushButton("⚡")
-        self._autostart_btn.setFixedSize(28, 28)
-        self._autostart_btn.setToolTip("点击开启开机自启")
-        self._autostart_btn.setStyleSheet(self._autostart_btn_style(False))
-        self._autostart_btn.clicked.connect(self._on_autostart_clicked)
-
-        # 主题切换按钮（在搜索按钮左边）
-        self._theme_btn = QPushButton("🌙" if not AppTheme.is_dark() else "☀️")
-        self._theme_btn.setFixedSize(28, 28)
-        self._theme_btn.setToolTip("切换深色模式" if not AppTheme.is_dark() else "切换浅色模式")
-        self._theme_btn.setStyleSheet(self._icon_btn_style())
-        self._theme_btn.clicked.connect(self._on_theme_clicked)
-
-        # 搜索按钮
-        self._search_btn = QPushButton("🔍")
-        self._search_btn.setFixedSize(28, 28)
-        self._search_btn.setToolTip("搜索")
-        self._search_btn.setStyleSheet(self._icon_btn_style())
-        self._search_btn.clicked.connect(self._toggle_search)
-
-        # 置顶切换按钮
-        self._pin_btn = QPushButton("📌")
-        self._pin_btn.setFixedSize(28, 28)
-        self._pin_btn.setToolTip("点击切换置顶")
-        self._pin_btn.setStyleSheet(AppTheme.pin_btn_style(True))
-        self._pin_btn.clicked.connect(self.signal_toggle_pin.emit)
-
-        # 收起全部卡片按钮
-        self._collapse_cards_btn = QPushButton("⊟")
-        self._collapse_cards_btn.setFixedSize(28, 28)
-        self._collapse_cards_btn.setToolTip("收起全部卡片")
-        self._collapse_cards_btn.setStyleSheet(self._icon_btn_style())
-        self._collapse_cards_btn.clicked.connect(self._toggle_collapse_cards)
-
-        # 透明度按钮
-        self._opacity_btn = QPushButton("🔮")
-        self._opacity_btn.setFixedSize(28, 28)
-        self._opacity_btn.setToolTip("调整窗口透明度")
-        self._opacity_btn.setStyleSheet(self._icon_btn_style())
-        self._opacity_btn.clicked.connect(self._toggle_opacity_panel)
-
-        # 折叠按钮
-        self._collapse_btn = QPushButton("━")
-        self._collapse_btn.setFixedSize(28, 28)
-        self._collapse_btn.setToolTip("折叠")
-        self._collapse_btn.setStyleSheet(self._icon_btn_style())
-        self._collapse_btn.clicked.connect(self.signal_collapse_clicked.emit)
-
-        layout.addWidget(title)
-        layout.addWidget(spacer)
-        layout.addWidget(self._autostart_btn)
-        layout.addWidget(self._theme_btn)
-        layout.addWidget(self._search_btn)
-        layout.addWidget(self._pin_btn)
-        layout.addWidget(self._collapse_cards_btn)
-        layout.addWidget(self._opacity_btn)
-        layout.addWidget(self._collapse_btn)
-        bar.setLayout(layout)
-        return bar
-
-    def _on_theme_clicked(self) -> None:
-        """主题按钮点击处理"""
-        self.signal_theme_toggled.emit(not AppTheme.is_dark())
-
-    def _on_autostart_clicked(self) -> None:
-        """开机自启按钮点击处理"""
-        self.signal_autostart_toggled.emit(not self._autostart)
+    # ── 标题栏（提取到 TitleBar 独立组件） ─────────────────
 
     def set_autostart(self, enabled: bool) -> None:
         """同步开机自启状态（由控制器调用）"""
         self._autostart = enabled
-        self._autostart_btn.setText("⚡" if enabled else "🔌")
-        self._autostart_btn.setStyleSheet(self._autostart_btn_style(enabled))
-        self._autostart_btn.setToolTip("点击关闭开机自启" if enabled else "点击开启开机自启")
+        self._title_bar.set_autostart(enabled)
 
     def set_opacity_value(self, value: float) -> None:
         """设置透明度值并同步滑块（由控制器调用，恢复持久化值）"""
@@ -233,13 +153,7 @@ class ExpandedView(QFrame):
     def _toggle_collapse_cards(self) -> None:
         """切换全部卡片的折叠/展开"""
         self._all_collapsed = not self._all_collapsed
-        btn = self._collapse_cards_btn
-        if self._all_collapsed:
-            btn.setText("⊞")
-            btn.setToolTip("展开全部卡片")
-        else:
-            btn.setText("⊟")
-            btn.setToolTip("收起全部卡片")
+        self._title_bar.set_collapse_cards_state(self._all_collapsed)
         for w in self._iter_cards():
             w.set_all_collapsed(self._all_collapsed)
 
@@ -295,9 +209,9 @@ class ExpandedView(QFrame):
             self._hide_opacity_panel()
             return
 
-        btn_pos = self._opacity_btn.mapTo(self, QPoint(0, 0))
-        panel_x = btn_pos.x() + self._opacity_btn.width() - self._opacity_panel.width()
-        panel_y = btn_pos.y() + self._opacity_btn.height() + 2
+        btn_rect = self._title_bar.opacity_btn_global_rect()
+        panel_x = btn_rect.right() - self._opacity_panel.width()
+        panel_y = btn_rect.bottom() + 2
         self._opacity_panel.move(panel_x, panel_y)
         self._opacity_panel.show()
         self._opacity_panel.raise_()
@@ -358,19 +272,7 @@ class ExpandedView(QFrame):
         self._add_btn = QPushButton("＋")
         self._add_btn.setFixedSize(30, 30)
         self._add_btn.setToolTip("添加")
-        self._add_btn.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 18px;
-                color: {AppTheme.C["accent"]};
-                border-radius: 4px;
-                padding: 2px;
-                background: {AppTheme.C["bg_hover"]};
-            }}
-            QPushButton:hover {{
-                background: {AppTheme.C["accent"]};
-                color: white;
-            }}
-        """)
+        self._add_btn.setStyleSheet(AppTheme.accent_fill_btn())
         self._add_btn.clicked.connect(self._on_add_submit)
 
         layout.addWidget(self._add_input)
@@ -381,14 +283,7 @@ class ExpandedView(QFrame):
         self._search_bar = QLineEdit()
         self._search_bar.setPlaceholderText("搜索待办事项...")
         self._search_bar.setVisible(False)
-        self._search_bar.setStyleSheet(f"""
-            QLineEdit {{
-                border: 1px solid {AppTheme.C["accent"]};
-                border-radius: 4px;
-                padding: 6px 10px;
-                background: {AppTheme.C["bg_card"]};
-            }}
-        """)
+        self._search_bar.setStyleSheet(AppTheme.search_bar_style())
         self._search_bar.textChanged.connect(self._on_search_debounced)
 
         layout.addWidget(self._search_bar)
@@ -423,64 +318,98 @@ class ExpandedView(QFrame):
 
     # ── 待办列表 ──────────────────────────────────────────
 
-    def refresh(self, items: list[TodoItem]) -> None:
-        """刷新整个待办列表"""
+    def _create_card(self, item: TodoItem) -> TodoCard:
+        """创建一张新卡片并连接信号"""
+        card = TodoCard(item, self)
+        card.setProperty("todo_item_id", item.id)
+        card.signal_completed.connect(self.signal_item_completed.emit)
+        card.signal_deleted.connect(self.signal_item_deleted.emit)
+        card.signal_progress_added.connect(self.signal_progress_added.emit)
+        card.signal_sticky_toggled.connect(self.signal_sticky_toggled.emit)
+        card.signal_title_changed.connect(self.signal_title_changed.emit)
+        card.signal_progress_edited.connect(self.signal_progress_edited.emit)
+        card.signal_progress_deleted.connect(self.signal_progress_deleted.emit)
+        card.progress_toggled_signal.connect(
+            lambda show_all, c=card: self._on_progress_toggle(c, show_all),
+        )
+        if self._all_collapsed:
+            card.set_all_collapsed(True)
+        self._card_map[item.id] = card
+        return card
+
+    def refresh(self, items: list[TodoItem], search_query: str = "") -> None:
+        """差异化刷新待办列表（避免销毁重建已有卡片）"""
         self._items = items
+        self._search_query = search_query
 
-        # 清空现有卡片
-        self._clear_list()
-
-        # 过滤活跃项
+        # 过滤 + 排序活跃项
         active = [i for i in items if i.is_active]
-
         if not active:
-            self._show_empty_state()
+            self._clear_list()
+            if search_query:
+                self._show_no_results()
+            else:
+                self._show_empty_state()
             return
 
-        # 置顶项排前面，同优先级按 position 和创建时间
         active.sort(key=lambda i: (not i.sticky, i.position if i.position else 0, i.created_at))
 
-        # 如果搜索激活，进一步过滤
-        if self._search_query:
-            q = self._search_query.lower()
-            active = [
-                i for i in active
-                if q in i.title.lower()
-                or any(q in p.text.lower() for p in i.progress)
-            ]
+        # ── 计算需要展示的卡片 ────────────────────────────
+        shown_ids = set()
+        card_order: list[TodoCard] = []
 
-        if not active:
-            self._show_no_results()
-            return
-
-        # 动态创建卡片
         for item in active:
-            card = TodoCard(item, self)
-            card.setProperty("todo_item_id", item.id)  # 用于拖放识别
-            card.signal_completed.connect(self.signal_item_completed.emit)
-            card.signal_deleted.connect(self.signal_item_deleted.emit)
-            card.signal_progress_added.connect(self.signal_progress_added.emit)
-            card.signal_sticky_toggled.connect(self.signal_sticky_toggled.emit)
-            card.signal_title_changed.connect(self.signal_title_changed.emit)
-            card.signal_progress_edited.connect(self.signal_progress_edited.emit)
-            card.signal_progress_deleted.connect(self.signal_progress_deleted.emit)
-            # 进度展开/收起监听
-            card.progress_toggled_signal.connect(
-                lambda show_all, c=card: self._on_progress_toggle(c, show_all),
-            )
-            # 全部卡片折叠模式
-            if self._all_collapsed:
-                card.set_all_collapsed(True)
-            self._list_layout.insertWidget(self._list_layout.count() - 1, card)
+            card = self._card_map.get(item.id)
+            if card:
+                card.update_item(item)
+            else:
+                card = self._create_card(item)
+            shown_ids.add(item.id)
+            card_order.append(card)
+
+        # ── 移除不再展示的卡片 ────────────────────────────
+        for id_, card in list(self._card_map.items()):
+            if id_ not in shown_ids:
+                if self._progress_expanded_card_id == id_:
+                    self._progress_expanded_card_id = None
+                card.deleteLater()
+                del self._card_map[id_]
+
+        self._drag_mgr.clear()
+
+        # ── 清理布局中的非卡片 widget（状态标签等） ────────
+        for i in range(self._list_layout.count() - 1, -1, -1):
+            item = self._list_layout.itemAt(i)
+            w = item.widget()
+            if w and not isinstance(w, TodoCard):
+                self._list_layout.takeAt(i)
+                w.deleteLater()
+
+        # ── 按排序后的顺序排列卡片 ────────────────────────
+        insert_idx = 0
+        for card in card_order:
+            current_idx = self._list_layout.indexOf(card)
+            if current_idx != insert_idx:
+                if current_idx >= 0:
+                    self._list_layout.removeWidget(card)
+                self._list_layout.insertWidget(insert_idx, card)
+            insert_idx += 1
 
     def _clear_list(self) -> None:
-        """移除列表中所有卡片和状态提示"""
-        self._progress_expanded_card = None
-        while self._list_layout.count() > 1:  # 保留最后的 stretch
+        """移除列表中所有卡片和状态提示（完全重建时使用）"""
+        self._progress_expanded_card_id = None
+        self._drag_mgr.clear()
+        for card in self._card_map.values():
+            try:
+                card.deleteLater()
+            except RuntimeError:
+                pass
+        self._card_map.clear()
+        while self._list_layout.count() > 1:
             item = self._list_layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+            w = item.widget()
+            if w:
+                w.deleteLater()
 
     def _iter_cards(self):
         """遍历列表中的所有 TodoCard（跳过 stretch 和状态标签）"""
@@ -519,26 +448,33 @@ class ExpandedView(QFrame):
 
     def _on_progress_toggle(self, card: QWidget, show_all: bool) -> None:
         """卡片进度展开/收起回调"""
+        card_id = card.property("todo_item_id")
         if show_all:
             # 先收起其他卡片的进度
-            if self._progress_expanded_card and self._progress_expanded_card is not card:
-                try:
-                    self._progress_expanded_card.collapse_progress()
-                except RuntimeError:
-                    pass
-            self._progress_expanded_card = card
+            if (self._progress_expanded_card_id
+                    and self._progress_expanded_card_id != card_id):
+                other = self._find_card(self._progress_expanded_card_id)
+                if other:
+                    try:
+                        other.collapse_progress()
+                    except RuntimeError:
+                        pass
+            self._progress_expanded_card_id = card_id
         else:
-            if self._progress_expanded_card is card:
-                self._progress_expanded_card = None
+            if self._progress_expanded_card_id == card_id:
+                self._progress_expanded_card_id = None
 
     def _collapse_expanded_progress(self) -> None:
         """收起当前展开的进度（点击外部时调用）"""
-        if self._progress_expanded_card:
+        if not self._progress_expanded_card_id:
+            return
+        card = self._find_card(self._progress_expanded_card_id)
+        if card:
             try:
-                self._progress_expanded_card.collapse_progress()
+                card.collapse_progress()
             except RuntimeError:
                 pass
-            self._progress_expanded_card = None
+        self._progress_expanded_card_id = None
 
     # ── 事件过滤器：点击外部收起进度 + 拖放排序 ──────────
 
@@ -556,17 +492,10 @@ class ExpandedView(QFrame):
                 self._opacity_panel.mapToGlobal(QPoint(0, 0)),
                 self._opacity_panel.size(),
             )
-            btn_rect = QRect(
-                self._opacity_btn.mapToGlobal(QPoint(0, 0)),
-                self._opacity_btn.size(),
-            )
+            btn_rect = self._title_bar.opacity_btn_global_rect()
+            btn_rect.moveTopLeft(self.mapToGlobal(btn_rect.topLeft()))
             if not panel_rect.contains(global_pos) and not btn_rect.contains(global_pos):
                 self._hide_opacity_panel()
-
-        # 标题栏双击 → 折叠
-        if obj is self._title_bar and event.type() == QEvent.MouseButtonDblClick:
-            self.signal_collapse_clicked.emit()
-            return True
 
         is_container = obj is self._list_container
         is_viewport = obj is self._scroll_area.viewport()
@@ -575,173 +504,30 @@ class ExpandedView(QFrame):
             return self._handle_container_click(event)
         if not (is_container or is_viewport):
             return super().eventFilter(obj, event)
+
+        # 拖放排序事件 → 委托给 DragDropManager
+        mgr = self._drag_mgr
         if event.type() == QEvent.DragEnter:
-            return self._handle_drag_enter(event)
+            return mgr.handle_drag_enter(event) or super().eventFilter(obj, event)
         if event.type() == QEvent.DragMove:
-            return self._handle_drag_move(event, is_viewport)
+            return mgr.handle_drag_move(event, is_viewport) or super().eventFilter(obj, event)
         if event.type() == QEvent.DragLeave:
-            return self._handle_drag_leave()
+            return mgr.handle_drag_leave() or super().eventFilter(obj, event)
         if event.type() == QEvent.Drop:
-            return self._handle_drag_drop(event, is_viewport)
+            return mgr.handle_drag_drop(event, is_viewport) or super().eventFilter(obj, event)
         return super().eventFilter(obj, event)
 
     def _handle_container_click(self, event) -> bool:
         """点击容器空白区域收起展开的进度"""
-        if self._progress_expanded_card is not None:
-            click_pos = event.position().toPoint()
-            card_tl = self._progress_expanded_card.mapTo(
-                self._list_container, QPoint(0, 0)
-            )
-            card_rect = QRect(card_tl, self._progress_expanded_card.size())
-            if not card_rect.contains(click_pos):
-                self._collapse_expanded_progress()
+        if self._progress_expanded_card_id is not None:
+            card = self._find_card(self._progress_expanded_card_id)
+            if card:
+                click_pos = event.position().toPoint()
+                card_tl = card.mapTo(self._list_container, QPoint(0, 0))
+                card_rect = QRect(card_tl, card.size())
+                if not card_rect.contains(click_pos):
+                    self._collapse_expanded_progress()
         return super().eventFilter(self._list_container, event)
-
-    def _is_valid_drag(self, event) -> bool:
-        """检查是否为有效的卡片拖放事件"""
-        if self._search_query:
-            return False
-        mime = event.mimeData()
-        return mime.hasText() and mime.text().startswith("todo-card:")
-
-    def _drag_local_pos(self, event, is_viewport: bool) -> QPoint:
-        """获取容器坐标系下的拖放位置"""
-        if is_viewport:
-            return self._list_container.mapFrom(
-                self._scroll_area.viewport(), event.position().toPoint())
-        return event.position().toPoint()
-
-    def _handle_drag_enter(self, event) -> bool:
-        if not self._is_valid_drag(event):
-            return super().eventFilter(self._list_container, event)
-        event.acceptProposedAction()
-        self._show_drop_indicator(event)
-        return True
-
-    def _handle_drag_move(self, event, is_viewport: bool) -> bool:
-        if not self._is_valid_drag(event):
-            return super().eventFilter(self._list_container, event)
-        self._drop_local_pos = self._drag_local_pos(event, is_viewport)
-        event.acceptProposedAction()
-        self._update_drop_indicator(event)
-        self._scroll_during_drag(event)
-        return True
-
-    def _handle_drag_leave(self) -> bool:
-        self._hide_drop_indicator()
-        return True
-
-    def _handle_drag_drop(self, event, is_viewport: bool) -> bool:
-        if not self._is_valid_drag(event):
-            return super().eventFilter(self._list_container, event)
-        self._drop_local_pos = self._drag_local_pos(event, is_viewport)
-        self._hide_drop_indicator()
-        self._handle_drop(event)
-        event.acceptProposedAction()
-        return True
-
-    # ── 拖放指示器 ──────────────────────────────────────
-
-    def _show_drop_indicator(self, event) -> None:
-        """创建插入指示线"""
-        if self._drop_indicator is None:
-            self._drop_indicator = QFrame(self._list_container)
-            margin = self._list_layout.contentsMargins()
-            w = self._list_container.width() - margin.left() - margin.right()
-            if w < 10:
-                w = 200  # fallback
-            self._drop_indicator.setFixedSize(int(w), 3)
-            self._drop_indicator.setStyleSheet(f"""
-                background: {AppTheme.C["accent"]};
-                border-radius: 1px;
-            """)
-            self._drop_indicator.hide()
-        self._update_drop_indicator(event)
-        self._drop_indicator.raise_()
-        self._drop_indicator.show()
-
-    def _update_drop_indicator(self, event) -> None:
-        """更新指示线位置到最近的卡片间隙"""
-        if self._drop_indicator is None:
-            return
-        y = self._drop_position_y(event)
-        margin = self._list_layout.contentsMargins()
-        self._drop_indicator.move(margin.left(), y)
-
-    def _drop_pos(self, event) -> QPoint:
-        """从事件中提取容器坐标系下的位置"""
-        if self._drop_local_pos is not None:
-            return self._drop_local_pos
-        return event.position().toPoint()
-
-    def _drop_position_y(self, event) -> int:
-        """计算指示线应放置的 Y 坐标"""
-        margin = self._list_layout.contentsMargins()
-        mouse_y = self._drop_pos(event).y()
-        y = margin.top()
-
-        for w in self._iter_cards():
-            if not w.isVisible():
-                continue
-            card_rect = w.geometry()
-            mid = card_rect.top() + card_rect.height() // 2
-            if mouse_y <= mid:
-                return card_rect.top()
-            y = card_rect.bottom() + 1
-
-        return y
-
-    def _hide_drop_indicator(self) -> None:
-        """隐藏插入指示线"""
-        if self._drop_indicator:
-            self._drop_indicator.hide()
-
-    # ── 拖拽自动滚动 ────────────────────────────────────
-
-    def _scroll_during_drag(self, event) -> None:
-        """拖拽时根据鼠标位置自动滚动"""
-        viewport = self._scroll_area.viewport()
-        pos = viewport.mapFrom(self._list_container, self._drop_pos(event))
-        scrollbar = self._scroll_area.verticalScrollBar()
-        scroll_step = 20
-        margin = 30  # 距离边缘 px
-
-        if pos.y() < margin:
-            scrollbar.setValue(scrollbar.value() - scroll_step)
-        elif pos.y() > viewport.height() - margin:
-            scrollbar.setValue(scrollbar.value() + scroll_step)
-
-    # ── 拖放完成 ────────────────────────────────────────
-
-    def _handle_drop(self, event) -> None:
-        """处理拖放完成——重新排序并发送信号"""
-        text = event.mimeData().text()
-        if not text.startswith("todo-card:"):
-            return
-        dragged_id = text.replace("todo-card:", "")
-
-        mouse_pos = self._drop_pos(event)
-        ordered: list[str] = []
-        inserted = False
-
-        for w in self._iter_cards():
-            if not w.isVisible():
-                continue
-            card_id = w.property("todo_item_id")
-            if card_id == dragged_id:
-                continue
-            card_rect = w.geometry()
-            mid = card_rect.top() + card_rect.height() // 2
-            if not inserted and mouse_pos.y() <= mid:
-                ordered.append(dragged_id)
-                inserted = True
-            ordered.append(card_id)
-
-        if not inserted:
-            ordered.append(dragged_id)
-
-        if ordered:
-            self.signal_reorder_items.emit(ordered)
 
     # ── 卡片查找 ────────────────────────────────────────
 
@@ -770,7 +556,7 @@ class ExpandedView(QFrame):
 
         # 重建视图（卡片已在新位置）
         self._items = todos
-        self.refresh(todos)
+        self.refresh(todos, self._search_query)
 
         # 找到新卡片
         new_card = self._find_card(item_id)
@@ -818,7 +604,7 @@ class ExpandedView(QFrame):
         layout.setSpacing(4)
 
         self._archive_btn = QPushButton("📦 查看归档")
-        self._archive_btn.setStyleSheet(self._footer_btn_style())
+        self._archive_btn.setStyleSheet(AppTheme.text_link_btn())
         self._archive_btn.clicked.connect(self.signal_archive_view_requested.emit)
 
         spacer = QWidget()
@@ -869,14 +655,15 @@ class ExpandedView(QFrame):
     def set_pinned(self, pinned: bool) -> None:
         """同步置顶按钮样式（由控制器调用）"""
         self._pinned = pinned
-        self._pin_btn.setText("📌" if pinned else "📍")
-        self._pin_btn.setStyleSheet(AppTheme.pin_btn_style(pinned))
-        self._pin_btn.setToolTip("点击取消置顶" if pinned else "点击置顶")
+        self._title_bar.set_pinned(pinned)
 
     # ── 主题重载 ──────────────────────────────────────────
 
     def reapply_theme(self) -> None:
-        """重新应用当前主题样式（初始化 / 主题切换时调用）"""
+        """重新应用当前主题样式（初始化 / 主题切换时调用）
+
+        注：TitleBar 通过 AppTheme.register 自行处理样式更新。
+        """
         C = AppTheme.C
 
         # ── 自身 ──────────────────────────────────────────
@@ -888,59 +675,13 @@ class ExpandedView(QFrame):
             }}
         """)
 
-        # ── 标题栏 ────────────────────────────────────────
-        self._title_bar.setStyleSheet(f"""
-            background: {C["bg_primary"]};
-            border-bottom: 1px solid {C["border"]};
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-        """)
-
-        # ── 标题文字 ──────────────────────────────────────
-        title_label = self._title_bar.findChild(QLabel)
-        if title_label:
-            title_label.setStyleSheet(f"""
-                font: {AppTheme.FONT["title"]};
-                background: transparent;
-            """)
-
-        # ── 标题栏按钮 ────────────────────────────────────
-        self._autostart_btn.setStyleSheet(self._autostart_btn_style(self._autostart))
-        self._theme_btn.setStyleSheet(self._icon_btn_style())
-        self._theme_btn.setText("🌙" if not AppTheme.is_dark() else "☀️")
-        self._theme_btn.setToolTip("切换深色模式" if not AppTheme.is_dark() else "切换浅色模式")
-        self._search_btn.setStyleSheet(self._icon_btn_style())
-        self._pin_btn.setStyleSheet(AppTheme.pin_btn_style(self._pinned))
-        self._collapse_cards_btn.setStyleSheet(self._icon_btn_style())
-        self._opacity_btn.setStyleSheet(self._icon_btn_style())
-        self._collapse_btn.setStyleSheet(self._icon_btn_style())
-
         # ── 快速添加栏 ────────────────────────────────────
         self._add_bar.setStyleSheet(f"""
             background: {C["bg_card"]};
             border-bottom: 1px solid {C["border"]};
         """)
-        self._add_btn.setStyleSheet(f"""
-            QPushButton {{
-                font-size: 18px;
-                color: {C["accent"]};
-                border-radius: 4px;
-                padding: 2px;
-                background: {C["bg_hover"]};
-            }}
-            QPushButton:hover {{
-                background: {C["accent"]};
-                color: white;
-            }}
-        """)
-        self._search_bar.setStyleSheet(f"""
-            QLineEdit {{
-                border: 1px solid {C["accent"]};
-                border-radius: 4px;
-                padding: 6px 10px;
-                background: {C["bg_card"]};
-            }}
-        """)
+        self._add_btn.setStyleSheet(AppTheme.accent_fill_btn())
+        self._search_bar.setStyleSheet(AppTheme.search_bar_style())
 
         # ── 页脚 ────────────────────────────────────────────
         self._footer.setStyleSheet(f"""
@@ -954,18 +695,7 @@ class ExpandedView(QFrame):
             color: {C["text_secondary"]};
             background: transparent;
         """)
-        self._quit_btn.setStyleSheet(f"""
-            QPushButton {{
-                font: {AppTheme.FONT["small"]};
-                color: {C["text_disabled"]};
-                border-radius: 4px;
-                padding: 2px 8px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: {C["danger"]}; color: white;
-            }}
-        """)
+        self._quit_btn.setStyleSheet(AppTheme.danger_fill_btn())
 
         # ── 透明度面板 ──────────────────────────────────
         self._opacity_panel.setStyleSheet(f"""
@@ -990,58 +720,6 @@ class ExpandedView(QFrame):
 
         if not has_cards:
             # 空状态 / 无结果状态：需重建状态标签
-            self.refresh(self._items)
+            self.refresh(self._items, self._search_query)
 
-    # ── 样式辅助 ──────────────────────────────────────────
 
-    @staticmethod
-    def _icon_btn_style() -> str:
-        C = AppTheme.C
-        return f"""
-            QPushButton {{
-                font-size: 14px;
-                color: {C["text_secondary"]};
-                border-radius: 4px;
-                padding: 2px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: {C["bg_hover"]};
-                color: {C["accent"]};
-            }}
-        """
-
-    @staticmethod
-    def _autostart_btn_style(enabled: bool = False) -> str:
-        C = AppTheme.C
-        color = C["accent"] if enabled else C["text_disabled"]
-        hov_color = C["accent"] if enabled else C["text_secondary"]
-        return f"""
-            QPushButton {{
-                font-size: 14px;
-                color: {color};
-                border-radius: 4px;
-                padding: 2px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: {C["bg_hover"]};
-                color: {hov_color};
-            }}
-        """
-
-    @staticmethod
-    def _footer_btn_style() -> str:
-        C = AppTheme.C
-        return f"""
-            QPushButton {{
-                font: {AppTheme.FONT["small"]};
-                color: {C["accent"]};
-                padding: 4px 8px;
-                border-radius: 4px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: {C["bg_hover"]};
-            }}
-        """

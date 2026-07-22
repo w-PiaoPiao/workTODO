@@ -60,6 +60,9 @@ class AppController(QObject):
         self._tray_icon = None
         self._setup_tray()
 
+        # ── 搜索状态 ──────────────────────────────────────
+        self._search_query = ""
+
         # ── 加载数据 ──────────────────────────────────────
         self._load_data()
 
@@ -100,9 +103,19 @@ class AppController(QObject):
         self._refresh_views()
 
     def _refresh_views(self) -> None:
-        """刷新所有视图"""
-        # 更新展开视图
-        self._expanded_view.refresh(self._todos)
+        """刷新所有视图（保持搜索过滤状态）"""
+        # 如有活跃搜索，先过滤再传
+        if self._search_query:
+            q = self._search_query.lower()
+            filtered = [
+                i for i in self._todos
+                if i.is_active
+                and (q in i.title.lower()
+                     or any(q in p.text.lower() for p in i.progress))
+            ]
+            self._expanded_view.refresh(filtered, self._search_query)
+        else:
+            self._expanded_view.refresh(self._todos)
 
         # 更新计数
         active_count = len([t for t in self._todos if t.is_active])
@@ -309,9 +322,19 @@ class AppController(QObject):
             self._show_error(f"更新标题失败: {e}")
 
     def _on_search(self, query: str) -> None:
-        """搜索待办（已内嵌在 expanded_view 中）"""
-        # 通知 expanded_view 重新渲染
-        self._expanded_view.refresh(self._todos)
+        """搜索待办（在控制器中过滤，视图只负责展示）"""
+        self._search_query = query
+        if not query:
+            self._expanded_view.refresh(self._todos, "")
+            return
+        q = query.lower()
+        filtered = [
+            i for i in self._todos
+            if i.is_active
+            and (q in i.title.lower()
+                 or any(q in p.text.lower() for p in i.progress))
+        ]
+        self._expanded_view.refresh(filtered, query)
 
     def _on_show_archive(self) -> None:
         """显示归档对话框"""
@@ -545,23 +568,19 @@ class AppController(QObject):
     # ── 主题切换 ────────────────────────────────────────
 
     def _on_toggle_theme(self, dark: bool) -> None:
-        """切换浅色/深色模式"""
-        AppTheme.switch_theme(dark)
-
-        # ── 更新全局样式 ──────────────────────────────────
+        """切换浅色/深色模式（视图通过 AppTheme 观察者自动更新）"""
+        # 主题切换前先更新全局 QSS + palette（先于视图通知）
         app = QApplication.instance()
         app.setStyleSheet(AppTheme.global_qss())
         AppTheme.apply_palette(app)
-
-        # ── 更新自定义 tooltip ────────────────────────────
         CustomTooltip.apply_theme_style()
 
-        # ── 更新主窗口全局样式（覆盖例程） ────────────────
-        self._window.setStyleSheet(AppTheme.global_qss())
+        # 触发主题切换（自动通知所有已注册的视图）
+        AppTheme.switch_theme(dark)
 
-        # ── 更新各视图 ────────────────────────────────────
-        self._collapsed_view.reapply_theme()
-        self._expanded_view.reapply_theme()
+        # 重新应用全局 QSS（视图更新后覆盖一次以确保一致性）
+        app.setStyleSheet(AppTheme.global_qss())
+        self._window.setStyleSheet(AppTheme.global_qss())
 
         # ── 持久化偏好 ────────────────────────────────────
         settings = QSettings("Personal", "待办事项和便签")

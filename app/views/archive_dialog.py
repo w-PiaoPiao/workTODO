@@ -90,11 +90,7 @@ class ArchiveDialog(QDialog):
 
         close_btn = QPushButton("✕")
         close_btn.setFixedSize(28, 28)
-        close_btn.setStyleSheet(f"""
-            QPushButton {{ font-size: 14px; color: {AppTheme.C["text_secondary"]};
-                border-radius: 4px; background: transparent; }}
-            QPushButton:hover {{ background: {AppTheme.C["bg_hover"]}; color: {AppTheme.C["danger"]}; }}
-        """)
+        close_btn.setStyleSheet(AppTheme.close_btn())
         close_btn.clicked.connect(self.close)
 
         title_layout.addWidget(title_label)
@@ -247,21 +243,7 @@ class ArchiveDialog(QDialog):
 
         # 恢复按钮
         restore_btn = QPushButton("↩ 恢复到待办")
-        restore_btn.setStyleSheet(f"""
-            QPushButton {{
-                font: {AppTheme.FONT["small"]};
-                color: {AppTheme.C["accent"]};
-                border: 1px solid {AppTheme.C["accent"]};
-                border-radius: 3px;
-                padding: 2px 8px;
-                background: transparent;
-                max-width: 120px;
-            }}
-            QPushButton:hover {{
-                background: {AppTheme.C["accent"]};
-                color: white;
-            }}
-        """)
+        restore_btn.setStyleSheet(AppTheme.outline_btn("120px"))
         restore_btn.clicked.connect(
             lambda checked, i=item: self.signal_restore_item.emit(i.id)
         )

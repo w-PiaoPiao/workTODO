@@ -76,8 +76,9 @@ class CollapsedView(QFrame):
 
         self.setLayout(layout)
 
-        # ── 应用主题样式 ──────────────────────────────────
+        # ── 应用主题样式 + 注册主题监听 ──────────────────
         self.reapply_theme()
+        AppTheme.register(self.reapply_theme)
 
     # ── 双击展开 ──────────────────────────────────────────
 
@@ -115,9 +116,9 @@ class CollapsedView(QFrame):
             color: {AppTheme.C["text_primary"]};
             background: transparent;
         """)
-        self._quick_add_btn.setStyleSheet(self._btn_style())
+        self._quick_add_btn.setStyleSheet(AppTheme.icon_btn("16px"))
         self._pin_btn.setStyleSheet(AppTheme.pin_btn_style(self._pinned))
-        self._expand_btn.setStyleSheet(self._btn_style())
+        self._expand_btn.setStyleSheet(AppTheme.icon_btn("16px"))
 
     # ── 样式 ──────────────────────────────────────────────
 
@@ -131,19 +132,4 @@ class CollapsedView(QFrame):
             }}
         """
 
-    @staticmethod
-    def _btn_style() -> str:
-        C = AppTheme.C
-        return f"""
-            QPushButton {{
-                font-size: 16px;
-                color: {C["text_secondary"]};
-                border-radius: 4px;
-                padding: 2px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: {C["bg_hover"]};
-                color: {C["accent"]};
-            }}
-        """
+    # (_btn_style 已迁移到 AppTheme.icon_btn("16px"))
