@@ -14,7 +14,7 @@ class AppConfig:
 
     # 应用信息
     APP_NAME = "待办事项和便签"
-    APP_VERSION = "0.3.1"
+    APP_VERSION = "0.4.0"
 
     # ── 数据路径 ──────────────────────────────────────────────
     # 数据存储目录：优先使用环境变量覆盖，默认在用户数据目录下
@@ -33,6 +33,7 @@ class AppConfig:
     # 数据文件
     TODOS_FILE = "todos.json"
     ARCHIVE_FILE = "archive.json"
+    NOTES_FILE = "notes.json"
 
     @classmethod
     def todos_path(cls) -> Path:
@@ -63,11 +64,30 @@ class AppConfig:
     MAX_PROGRESS_COLLAPSED = 3  # 进度条折叠阈值
     SEARCH_DEBOUNCE_MS = 300    # 搜索防抖毫秒
     NOTIFICATION_DURATION_MS = 2000  # 通知显示时长
+    SAVE_DEBOUNCE_MS = 500      # 数据落盘防抖毫秒
+
+    # ── 截止日期提醒 ──────────────────────────────────────────
+    DUE_REMIND_HOUR = 9         # 每天检查截止日期提醒的时间（时）
+    DUE_REMIND_CHECK_MS = 3600_000  # 运行期间提醒检查间隔（1 小时）
 
     # ── 窗口透明度 ──────────────────────────────────────────────
     WINDOW_OPACITY_DEFAULT = 1.0     # 默认完全不透明
     WINDOW_OPACITY_MIN = 0.3         # 最小透明度
     WINDOW_OPACITY_MAX = 1.0         # 最大透明度
+
+    # ── 字号缩放 ──────────────────────────────────────────────
+    FONT_SCALE_DEFAULT = 1.0     # 默认字号比例
+    FONT_SCALE_MIN = 0.85        # 最小字号比例
+    FONT_SCALE_MAX = 1.3         # 最大字号比例
+
+    # ── 便签颜色（key → (浅色背景, 深色背景, 名称)） ──────────
+    NOTE_COLORS = {
+        "yellow": ("#FFF3B8", "#4A4218", "黄色"),
+        "blue":   ("#C7E8FF", "#17374F", "蓝色"),
+        "green":  ("#D4F5D0", "#1B3D1C", "绿色"),
+        "pink":   ("#FFD6E0", "#4A1A28", "粉色"),
+        "white":  ("#FFFFFF", "#2D2D2D", "白色"),
+    }
 
     # ── 贴顶隐藏 ──────────────────────────────────────────────
     STICK_TO_TOP_PEEK_HEIGHT = 6    # 隐藏后露出的像素高度

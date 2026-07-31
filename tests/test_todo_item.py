@@ -116,3 +116,57 @@ class TestTodoItem:
 
     def test_completed_display_none(self, sample_item):
         assert sample_item.completed_display == ""
+
+    def test_due_date_default(self, sample_item):
+        assert sample_item.due_date is None
+        assert sample_item.tags == []
+
+    def test_due_date_round_trip(self):
+        item = TodoItem(title="带日期", due_date="2099-01-01", tags=["工作", "重要"])
+        d = item.to_dict()
+        assert d["due_date"] == "2099-01-01"
+        assert d["tags"] == ["工作", "重要"]
+        restored = TodoItem.from_dict(d)
+        assert restored.due_date == "2099-01-01"
+        assert restored.tags == ["工作", "重要"]
+
+    def test_from_dict_legacy_without_new_fields(self):
+        """旧版本数据无 due_date/tags 字段，应正常解析"""
+        item = TodoItem.from_dict({"title": "旧数据"})
+        assert item.due_date is None
+        assert item.tags == []
+
+    def test_from_dict_tags_ignores_non_string(self):
+        item = TodoItem.from_dict({"title": "脏标签", "tags": ["好", 123, None]})
+        assert item.tags == ["好"]
+
+    def test_is_overdue(self):
+        item = TodoItem(title="已过期", due_date="2000-01-01")
+        assert item.is_overdue
+
+    def test_is_overdue_future(self):
+        item = TodoItem(title="未到期", due_date="2099-01-01")
+        assert not item.is_overdue
+
+    def test_is_overdue_invalid(self):
+        item = TodoItem(title="格式错误", due_date="not-a-date")
+        assert not item.is_overdue
+        assert item.due_display == "not-a-date"
+
+    def test_due_display_today(self):
+        from datetime import datetime
+        from app.models.todo_item import CST
+        today = datetime.now(CST).strftime("%Y-%m-%d")
+        item = TodoItem(title="今天到期", due_date=today)
+        assert "今天" in item.due_display
+
+    def test_due_display_tomorrow(self):
+        from datetime import datetime, timedelta
+        from app.models.todo_item import CST
+        tomorrow = (datetime.now(CST) + timedelta(days=1)).strftime("%Y-%m-%d")
+        item = TodoItem(title="明天到期", due_date=tomorrow)
+        assert "明天" in item.due_display
+
+    def test_due_display_overdue(self):
+        item = TodoItem(title="过期", due_date="2000-01-01")
+        assert "已过期" in item.due_display

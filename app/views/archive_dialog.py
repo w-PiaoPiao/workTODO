@@ -34,13 +34,7 @@ class ArchiveDialog(QDialog):
         self.setWindowFlags(
             Qt.Dialog | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint
         )
-        self.setStyleSheet(f"""
-            ArchiveDialog {{
-                background: {AppTheme.C["bg_card"]};
-                border: 1px solid {AppTheme.C["border"]};
-                border-radius: 8px;
-            }}
-        """)
+        self.setStyleSheet(AppTheme.dialog_frame_style("ArchiveDialog"))
 
         self._build_ui()
         self._refresh()
@@ -72,12 +66,7 @@ class ArchiveDialog(QDialog):
         # ── 标题栏 ────────────────────────────────────────
         title_bar = QWidget()
         title_bar.setFixedHeight(40)
-        title_bar.setStyleSheet(f"""
-            background: {AppTheme.C["bg_primary"]};
-            border-bottom: 1px solid {AppTheme.C["border"]};
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-        """)
+        title_bar.setStyleSheet(AppTheme.dialog_title_bar_style())
         title_layout = QHBoxLayout()
         title_layout.setContentsMargins(12, 0, 8, 0)
 
@@ -102,16 +91,7 @@ class ArchiveDialog(QDialog):
         # ── 搜索栏 ────────────────────────────────────────
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("搜索归档记录...")
-        self._search_input.setStyleSheet(f"""
-            QLineEdit {{
-                border: 1px solid {AppTheme.C["border"]};
-                border-radius: 4px;
-                padding: 6px 10px;
-                margin: 8px 12px;
-                background: {AppTheme.C["bg_card"]};
-            }}
-            QLineEdit:focus {{ border-color: {AppTheme.C["accent"]}; }}
-        """)
+        self._search_input.setStyleSheet(AppTheme.dialog_input_style())
         self._search_input.textChanged.connect(self._on_search)
         layout.addWidget(self._search_input)
 
@@ -135,14 +115,7 @@ class ArchiveDialog(QDialog):
         self._footer_label = QLabel()
         self._footer_label.setFixedHeight(32)
         self._footer_label.setAlignment(Qt.AlignCenter)
-        self._footer_label.setStyleSheet(f"""
-            font: {AppTheme.FONT["small"]};
-            color: {AppTheme.C["text_secondary"]};
-            background: {AppTheme.C["bg_primary"]};
-            border-top: 1px solid {AppTheme.C["border"]};
-            border-bottom-left-radius: 8px;
-            border-bottom-right-radius: 8px;
-        """)
+        self._footer_label.setStyleSheet(AppTheme.dialog_footer_style())
         layout.addWidget(self._footer_label)
 
         self.setLayout(layout)
@@ -190,13 +163,7 @@ class ArchiveDialog(QDialog):
     def _make_archive_card(self, item: TodoItem) -> QWidget:
         """创建归档卡片（只读）"""
         card = QFrame()
-        card.setStyleSheet(f"""
-            QFrame {{
-                background: {AppTheme.C["bg_completed"]};
-                border-radius: 6px;
-                border: 1px solid {AppTheme.C["border"]};
-            }}
-        """)
+        card.setStyleSheet(AppTheme.archive_card_style())
         layout = QVBoxLayout()
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(4)

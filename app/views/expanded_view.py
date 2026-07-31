@@ -15,6 +15,7 @@ from PySide6.QtCore import Signal, Qt, QTimer, QEvent, QPoint, QRect, QPropertyA
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QScrollArea, QFrame, QSizePolicy, QSizeGrip, QApplication, QSlider,
+    QStackedWidget, QTabBar,
 )
 from app.config import AppConfig
 from app.views.theme import AppTheme
@@ -22,6 +23,7 @@ from app.models.todo_item import TodoItem
 from app.views.todo_card import TodoCard
 from app.views.title_bar import TitleBar
 from app.views.drag_drop_manager import DragDropManager
+from app.views.note_view import NoteView
 
 
 class ExpandedView(QFrame):
@@ -41,9 +43,19 @@ class ExpandedView(QFrame):
     signal_title_changed = Signal(str, str)  # item_id, new_title
     signal_progress_edited = Signal(str, str, str)  # item_id, entry_id, new_text
     signal_progress_deleted = Signal(str, str)  # item_id, entry_id
-    signal_theme_toggled = Signal(bool)  # dark=True
+    signal_theme_mode_clicked = Signal()  # 主题三态轮换
     signal_autostart_toggled = Signal(bool)  # enabled=True
-    signal_opacity_changed = Signal(float)  # 0.0 ~ 1.0
+    signal_opacity_changed = Signal(float)  # 0.0 ~ 1.0（实时窗口）
+    signal_opacity_committed = Signal(float)  # 0.0 ~ 1.0（松手持久化）
+    signal_font_scale_changed = Signal(float)  # 字号缩放（松手应用+持久化）
+    signal_due_date_set = Signal(str, str)  # item_id, due_date（空=清除）
+    signal_tab_changed = Signal(str)  # "todo" | "notes"
+    signal_tag_filter_clicked = Signal(str)  # tag（空=全部）
+    signal_stats_requested = Signal()
+    signal_backup_clicked = Signal()
+    signal_notes_added = Signal(str, str)  # content, color
+    signal_note_updated = Signal(str, str, str)  # note_id, content, color
+    signal_note_deleted = Signal(str)  # note_id
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -59,6 +71,8 @@ class ExpandedView(QFrame):
         self._autostart = False  # 开机自启状态
         self._all_collapsed = False  # 全部卡片折叠状态
         self._opacity = AppConfig.WINDOW_OPACITY_DEFAULT
+        self._active_tag = ""  # 当前标签筛选（空=全部）
+        self._all_tags: list[str] = []
 
         # 搜索防抖 —— 复用单个 timer，避免每次按键创建新对象
         self._search_timer = QTimer()
@@ -88,16 +102,45 @@ class ExpandedView(QFrame):
         self._title_bar = TitleBar()
         self._title_bar.signal_collapse_clicked.connect(self.signal_collapse_clicked.emit)
         self._title_bar.signal_autostart_toggled.connect(self.signal_autostart_toggled.emit)
-        self._title_bar.signal_theme_toggled.connect(self.signal_theme_toggled.emit)
+        self._title_bar.signal_theme_mode_clicked.connect(self.signal_theme_mode_clicked.emit)
         self._title_bar.signal_search_clicked.connect(self._toggle_search)
         self._title_bar.signal_toggle_pin.connect(self.signal_toggle_pin.emit)
         self._title_bar.signal_collapse_cards_toggled.connect(self._toggle_collapse_cards)
-        self._title_bar.signal_opacity_clicked.connect(self._toggle_opacity_panel)
+        self._title_bar.signal_settings_clicked.connect(self._toggle_settings_panel)
+        self._title_bar.signal_stats_clicked.connect(self.signal_stats_requested.emit)
         main_layout.addWidget(self._title_bar)
+
+        # ── 待办 / 便签切换标签栏 ─────────────────────────
+        self._tab_bar = QTabBar()
+        self._tab_bar.addTab("📋 待办")
+        self._tab_bar.addTab("📝 便签")
+        self._tab_bar.setStyleSheet(AppTheme.tab_bar_style())
+        self._tab_bar.setExpanding(True)
+        self._tab_bar.currentChanged.connect(self._on_tab_changed)
+        main_layout.addWidget(self._tab_bar)
+
+        # ── 页面容器（待办页 + 便签页） ────────────────────
+        self._pages = QStackedWidget()
+        self._todo_page = QWidget()
+        self._todo_layout = QVBoxLayout()
+        self._todo_layout.setContentsMargins(0, 0, 0, 0)
+        self._todo_layout.setSpacing(0)
+        self._todo_page.setLayout(self._todo_layout)
+        self._note_view = NoteView()
+        self._note_view.signal_notes_added.connect(self.signal_notes_added.emit)
+        self._note_view.signal_note_updated.connect(self.signal_note_updated.emit)
+        self._note_view.signal_note_deleted.connect(self.signal_note_deleted.emit)
+        self._pages.addWidget(self._todo_page)
+        self._pages.addWidget(self._note_view)
+        main_layout.addWidget(self._pages, stretch=1)
 
         # ── 快速添加栏 ────────────────────────────────────
         self._add_bar = self._make_add_bar()
-        main_layout.addWidget(self._add_bar)
+        self._todo_layout.addWidget(self._add_bar)
+
+        # ── 标签筛选行 ────────────────────────────────────
+        self._tag_row = self._make_tag_row()
+        self._todo_layout.addWidget(self._tag_row)
 
         # ── 待办列表区域 ──────────────────────────────────
         self._scroll_area = QScrollArea()
@@ -122,21 +165,46 @@ class ExpandedView(QFrame):
             is_searching=lambda: bool(self._search_query),
         )
 
-        main_layout.addWidget(self._scroll_area, stretch=1)
+        self._todo_layout.addWidget(self._scroll_area, stretch=1)
 
         # ── 页脚 ──────────────────────────────────────────
         self._footer = self._make_footer()
-        main_layout.addWidget(self._footer)
+        self._todo_layout.addWidget(self._footer)
 
         self.setLayout(main_layout)
 
-        # ── 透明度滑块面板 ────────────────────────────
-        self._opacity_panel = self._make_opacity_panel()
+        # ── 设置面板 / 统计面板 ────────────────────────
+        self._settings_panel = self._make_settings_panel()
+        self._stats_panel = self._make_stats_panel()
 
         # ── 应用主题样式 ──────────────────────────────────
         self.reapply_theme()
 
         self._built = True
+
+    # ── 标签页切换 ──────────────────────────────────────────
+
+    def _on_tab_changed(self, index: int) -> None:
+        """待办/便签页切换"""
+        self._pages.setCurrentIndex(index)
+        self.signal_tab_changed.emit("todo" if index == 0 else "notes")
+
+    def current_tab(self) -> str:
+        """当前标签页"""
+        return "todo" if self._tab_bar.currentIndex() == 0 else "notes"
+
+    def switch_tab(self, tab: str) -> None:
+        """切换到指定标签页"""
+        self._tab_bar.setCurrentIndex(0 if tab == "todo" else 1)
+
+    def set_notes(self, notes) -> None:
+        """同步便签列表（由控制器调用）"""
+        self._note_view.refresh(notes)
+
+    def focus_note_add(self) -> None:
+        """聚焦便签添加入口"""
+        self.switch_tab("notes")
+        self._note_view.focus_add()
 
     # ── 标题栏（提取到 TitleBar 独立组件） ─────────────────
 
@@ -145,10 +213,19 @@ class ExpandedView(QFrame):
         self._autostart = enabled
         self._title_bar.set_autostart(enabled)
 
+    def set_theme_mode(self, mode: str) -> None:
+        """同步主题模式按钮状态（由控制器调用）"""
+        self._title_bar.set_theme_mode(mode)
+
     def set_opacity_value(self, value: float) -> None:
         """设置透明度值并同步滑块（由控制器调用，恢复持久化值）"""
         self._opacity = value
         self._opacity_slider.setValue(int(value * 100))
+
+    def set_font_scale_value(self, scale: float) -> None:
+        """设置字号缩放并同步滑块（由控制器调用，恢复持久化值）"""
+        self._font_slider.setValue(int(scale * 100))
+        self._font_label.setText(f"{int(scale * 100)}%")
 
     def _toggle_collapse_cards(self) -> None:
         """切换全部卡片的折叠/展开"""
@@ -157,30 +234,26 @@ class ExpandedView(QFrame):
         for w in self._iter_cards():
             w.set_all_collapsed(self._all_collapsed)
 
-    # ── 透明度控制 ─────────────────────────────────────────
+    # ── 设置面板（透明度 + 字号） ──────────────────────────
 
-    def _make_opacity_panel(self) -> QFrame:
-        """创建透明度滑块弹出面板"""
+    def _make_settings_panel(self) -> QFrame:
+        """创建设置弹出面板（透明度滑块 + 字号滑块）"""
         panel = QFrame(self)
-        panel.setFixedSize(180, 44)
-        panel.setStyleSheet(f"""
-            QFrame {{
-                background: {AppTheme.C["bg_card"]};
-                border: 1px solid {AppTheme.C["border"]};
-                border-radius: 6px;
-            }}
-        """)
-        layout = QHBoxLayout(panel)
-        layout.setContentsMargins(10, 0, 10, 0)
-        layout.setSpacing(8)
+        panel.setFixedSize(220, 84)
+        panel.setStyleSheet(AppTheme.popup_panel_style())
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(4)
+
+        opacity_row = QHBoxLayout()
+        opacity_row.setSpacing(8)
+        opacity_label = QLabel("透明度")
+        opacity_label.setStyleSheet(AppTheme.panel_label_style())
+        opacity_label.setFixedWidth(44)
 
         self._opacity_label = QLabel("100%")
-        self._opacity_label.setStyleSheet(f"""
-            font: {AppTheme.FONT["small"]};
-            color: {AppTheme.C["text_primary"]};
-            background: transparent;
-            min-width: 36px;
-        """)
+        self._opacity_label.setStyleSheet(AppTheme.panel_label_style())
+        self._opacity_label.setMinimumWidth(36)
 
         self._opacity_slider = QSlider(Qt.Horizontal)
         self._opacity_slider.setRange(
@@ -188,39 +261,174 @@ class ExpandedView(QFrame):
             int(AppConfig.WINDOW_OPACITY_MAX * 100),
         )
         self._opacity_slider.setValue(int(self._opacity * 100))
-        self._opacity_slider.setFixedWidth(110)
         self._opacity_slider.valueChanged.connect(self._on_opacity_slider_changed)
+        self._opacity_slider.sliderReleased.connect(self._on_opacity_committed)
 
-        layout.addWidget(self._opacity_label)
-        layout.addWidget(self._opacity_slider)
+        opacity_row.addWidget(opacity_label)
+        opacity_row.addWidget(self._opacity_slider, stretch=1)
+        opacity_row.addWidget(self._opacity_label)
+
+        font_row = QHBoxLayout()
+        font_row.setSpacing(8)
+        font_label = QLabel("字号")
+        font_label.setStyleSheet(AppTheme.panel_label_style())
+        font_label.setFixedWidth(44)
+
+        self._font_label = QLabel("100%")
+        self._font_label.setStyleSheet(AppTheme.panel_label_style())
+        self._font_label.setMinimumWidth(36)
+
+        self._font_slider = QSlider(Qt.Horizontal)
+        self._font_slider.setRange(
+            int(AppConfig.FONT_SCALE_MIN * 100),
+            int(AppConfig.FONT_SCALE_MAX * 100),
+        )
+        self._font_slider.setValue(int(AppTheme.font_scale() * 100))
+        self._font_slider.valueChanged.connect(self._on_font_slider_changed)
+        self._font_slider.sliderReleased.connect(self._on_font_committed)
+
+        font_row.addWidget(font_label)
+        font_row.addWidget(self._font_slider, stretch=1)
+        font_row.addWidget(self._font_label)
+
+        layout.addLayout(opacity_row)
+        layout.addLayout(font_row)
         panel.hide()
         return panel
 
     def _on_opacity_slider_changed(self, value: int) -> None:
-        """滑块值变化时实时更新透明度和显示"""
+        """滑块值变化时实时更新窗口透明度"""
         opacity = value / 100.0
         self._opacity = opacity
         self._opacity_label.setText(f"{value}%")
         self.signal_opacity_changed.emit(opacity)
 
-    def _toggle_opacity_panel(self) -> None:
-        """切换透明度面板的显示/隐藏"""
-        if self._opacity_panel.isVisible():
-            self._hide_opacity_panel()
+    def _on_opacity_committed(self) -> None:
+        """松手后持久化透明度（避免拖动时高频写注册表）"""
+        self.signal_opacity_committed.emit(self._opacity)
+
+    def _on_font_slider_changed(self, value: int) -> None:
+        """字号滑块变化：仅更新显示，松手才应用"""
+        self._font_label.setText(f"{value}%")
+
+    def _on_font_committed(self) -> None:
+        """字号滑块松手：应用缩放并持久化"""
+        scale = self._font_slider.value() / 100.0
+        self.signal_font_scale_changed.emit(scale)
+
+    def _toggle_settings_panel(self) -> None:
+        """切换设置面板的显示/隐藏"""
+        if self._settings_panel.isVisible():
+            self._hide_settings_panel()
             return
 
-        btn_rect = self._title_bar.opacity_btn_global_rect()
-        panel_x = btn_rect.right() - self._opacity_panel.width()
+        btn_rect = self._title_bar.settings_btn_global_rect()
+        panel_x = btn_rect.right() - self._settings_panel.width()
         panel_y = btn_rect.bottom() + 2
-        self._opacity_panel.move(panel_x, panel_y)
-        self._opacity_panel.show()
-        self._opacity_panel.raise_()
+        self._settings_panel.move(panel_x, panel_y)
+        self._settings_panel.show()
+        self._settings_panel.raise_()
         QApplication.instance().installEventFilter(self)
 
-    def _hide_opacity_panel(self) -> None:
-        """隐藏透明度面板并清理事件过滤器"""
-        self._opacity_panel.hide()
-        QApplication.instance().removeEventFilter(self)
+    def _hide_settings_panel(self) -> None:
+        """隐藏设置面板并清理事件过滤器"""
+        if self._settings_panel.isVisible():
+            self._settings_panel.hide()
+        if not self._stats_panel.isVisible():
+            QApplication.instance().removeEventFilter(self)
+
+    # ── 统计面板 ──────────────────────────────────────────
+
+    def _make_stats_panel(self) -> QFrame:
+        """创建统计弹出面板"""
+        panel = QFrame(self)
+        panel.setFixedSize(180, 110)
+        panel.setStyleSheet(AppTheme.popup_panel_style())
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(3)
+
+        self._stats_labels: list[QLabel] = []
+        for _ in range(5):
+            label = QLabel("")
+            label.setStyleSheet(AppTheme.panel_label_style())
+            layout.addWidget(label)
+            self._stats_labels.append(label)
+        panel.hide()
+        return panel
+
+    def show_stats(self, stats: dict) -> None:
+        """显示统计面板（由控制器提供数据后调用）"""
+        lines = [
+            f"待办 {stats['active_count']} 项",
+            f"今日完成 {stats['today_completed']} 项",
+            f"本周完成 {stats['week_completed']} 项",
+            f"累计完成 {stats['total_completed']} 项",
+            f"归档 {stats['archived_count']} 条",
+        ]
+        for label, text in zip(self._stats_labels, lines):
+            label.setText(text)
+
+        if not self._stats_panel.isVisible():
+            btn_rect = self._title_bar.stats_btn_global_rect()
+            panel_x = btn_rect.right() - self._stats_panel.width()
+            panel_y = btn_rect.bottom() + 2
+            self._stats_panel.move(panel_x, panel_y)
+            self._stats_panel.show()
+            self._stats_panel.raise_()
+            QApplication.instance().installEventFilter(self)
+
+    def _hide_stats_panel(self) -> None:
+        """隐藏统计面板并清理事件过滤器"""
+        if self._stats_panel.isVisible():
+            self._stats_panel.hide()
+        if not self._settings_panel.isVisible():
+            QApplication.instance().removeEventFilter(self)
+
+    # ── 标签筛选行 ────────────────────────────────────────
+
+    def _make_tag_row(self) -> QWidget:
+        """创建标签筛选行（无标签时隐藏）"""
+        row = QWidget()
+        row.setFixedHeight(32)
+        row.setStyleSheet(f"""
+            background: {AppTheme.C["bg_primary"]};
+            border-bottom: 1px solid {AppTheme.C["border"]};
+        """)
+        self._tag_layout = QHBoxLayout()
+        self._tag_layout.setContentsMargins(12, 2, 12, 2)
+        self._tag_layout.setSpacing(6)
+        row.setLayout(self._tag_layout)
+        row.hide()
+        return row
+
+    def update_tag_filters(self, tags: list[str], active_tag: str) -> None:
+        """更新标签筛选 chips（由控制器调用）"""
+        self._all_tags = tags
+        self._active_tag = active_tag
+        # 清空旧 chips
+        while self._tag_layout.count():
+            item = self._tag_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        if not tags:
+            self._tag_row.hide()
+            return
+
+        def _make_btn(text: str, tag: str):
+            btn = QPushButton(text)
+            btn.setStyleSheet(AppTheme.tag_filter_btn(tag == active_tag))
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(
+                lambda checked, t=tag: self.signal_tag_filter_clicked.emit(t))
+            return btn
+
+        self._tag_layout.addWidget(_make_btn("全部", ""))
+        for tag in tags:
+            self._tag_layout.addWidget(_make_btn(f"#{tag}", tag))
+        self._tag_layout.addStretch(1)
+        self._tag_row.show()
 
     # ── 搜索栏 ──────────────────────────────────────────────
 
@@ -277,7 +485,6 @@ class ExpandedView(QFrame):
 
         layout.addWidget(self._add_input)
         layout.addWidget(self._add_btn)
-        bar.setLayout(layout)
 
         # 搜索栏（默认隐藏）
         self._search_bar = QLineEdit()
@@ -329,6 +536,7 @@ class ExpandedView(QFrame):
         card.signal_title_changed.connect(self.signal_title_changed.emit)
         card.signal_progress_edited.connect(self.signal_progress_edited.emit)
         card.signal_progress_deleted.connect(self.signal_progress_deleted.emit)
+        card.signal_due_date_set.connect(self.signal_due_date_set.emit)
         card.progress_toggled_signal.connect(
             lambda show_all, c=card: self._on_progress_toggle(c, show_all),
         )
@@ -479,23 +687,32 @@ class ExpandedView(QFrame):
     # ── 事件过滤器：点击外部收起进度 + 拖放排序 ──────────
 
     def eventFilter(self, obj, event) -> bool:
-        """合并事件路由：标题栏双击折叠 + 透明度面板关闭 + 点击外部收起进度 + 拖放排序"""
+        """合并事件路由：弹出面板关闭 + 点击外部收起进度 + 拖放排序"""
         # 构造完成前所有事件直接透传（_build_ui 中事件可能先于属性初始化触发）
         if not self._built:
             return super().eventFilter(obj, event)
 
-        # 透明度面板：点击外部区域关闭
-        if (event.type() == QEvent.MouseButtonPress
-                and self._opacity_panel.isVisible()):
+        # 弹出面板：点击外部区域关闭
+        if event.type() == QEvent.MouseButtonPress:
             global_pos = event.globalPosition().toPoint()
-            panel_rect = QRect(
-                self._opacity_panel.mapToGlobal(QPoint(0, 0)),
-                self._opacity_panel.size(),
-            )
-            btn_rect = self._title_bar.opacity_btn_global_rect()
-            btn_rect.moveTopLeft(self.mapToGlobal(btn_rect.topLeft()))
-            if not panel_rect.contains(global_pos) and not btn_rect.contains(global_pos):
-                self._hide_opacity_panel()
+            if self._settings_panel.isVisible():
+                panel_rect = QRect(
+                    self._settings_panel.mapToGlobal(QPoint(0, 0)),
+                    self._settings_panel.size(),
+                )
+                btn_rect = self._title_bar.settings_btn_global_rect()
+                btn_rect.moveTopLeft(self.mapToGlobal(btn_rect.topLeft()))
+                if not panel_rect.contains(global_pos) and not btn_rect.contains(global_pos):
+                    self._hide_settings_panel()
+            if self._stats_panel.isVisible():
+                panel_rect = QRect(
+                    self._stats_panel.mapToGlobal(QPoint(0, 0)),
+                    self._stats_panel.size(),
+                )
+                btn_rect = self._title_bar.stats_btn_global_rect()
+                btn_rect.moveTopLeft(self.mapToGlobal(btn_rect.topLeft()))
+                if not panel_rect.contains(global_pos) and not btn_rect.contains(global_pos):
+                    self._hide_stats_panel()
 
         is_container = obj is self._list_container
         is_viewport = obj is self._scroll_area.viewport()
@@ -607,6 +824,11 @@ class ExpandedView(QFrame):
         self._archive_btn.setStyleSheet(AppTheme.text_link_btn())
         self._archive_btn.clicked.connect(self.signal_archive_view_requested.emit)
 
+        self._backup_btn = QPushButton("💾 备份")
+        self._backup_btn.setStyleSheet(AppTheme.text_link_btn())
+        self._backup_btn.setToolTip("导出 / 导入数据备份")
+        self._backup_btn.clicked.connect(self.signal_backup_clicked.emit)
+
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         spacer.setStyleSheet("background: transparent;")
@@ -640,6 +862,7 @@ class ExpandedView(QFrame):
         """)
 
         layout.addWidget(self._archive_btn)
+        layout.addWidget(self._backup_btn)
         layout.addWidget(spacer)
         layout.addWidget(self._stats_label)
         layout.addWidget(self._quit_btn)
@@ -696,21 +919,33 @@ class ExpandedView(QFrame):
             background: transparent;
         """)
         self._quit_btn.setStyleSheet(AppTheme.danger_fill_btn())
+        self._archive_btn.setStyleSheet(AppTheme.text_link_btn())
+        self._backup_btn.setStyleSheet(AppTheme.text_link_btn())
 
-        # ── 透明度面板 ──────────────────────────────────
-        self._opacity_panel.setStyleSheet(f"""
-            QFrame {{
-                background: {C["bg_card"]};
-                border: 1px solid {C["border"]};
-                border-radius: 6px;
-            }}
+        # ── 弹出面板 ────────────────────────────────────
+        self._settings_panel.setStyleSheet(AppTheme.popup_panel_style())
+        self._stats_panel.setStyleSheet(AppTheme.popup_panel_style())
+        self._opacity_label.setStyleSheet(AppTheme.panel_label_style())
+        self._font_label.setStyleSheet(AppTheme.panel_label_style())
+        for label in self._stats_labels:
+            label.setStyleSheet(AppTheme.panel_label_style())
+
+        # ── 标签筛选行 ────────────────────────────────────
+        self._tag_row.setStyleSheet(f"""
+            background: {C["bg_primary"]};
+            border-bottom: 1px solid {C["border"]};
         """)
-        self._opacity_label.setStyleSheet(f"""
-            font: {AppTheme.FONT["small"]};
-            color: {C["text_primary"]};
-            background: transparent;
-            min-width: 36px;
-        """)
+        for i in range(self._tag_layout.count()):
+            w = self._tag_layout.itemAt(i).widget()
+            if isinstance(w, QPushButton):
+                w.setStyleSheet(AppTheme.tag_filter_btn(
+                    w.text() == ("全部" if not self._active_tag else f"#{self._active_tag}")))
+
+        # ── 待办/便签标签栏 ──────────────────────────────
+        self._tab_bar.setStyleSheet(AppTheme.tab_bar_style())
+
+        # ── 便签页 ────────────────────────────────────────
+        self._note_view.reapply_theme()
 
         # ── 更新卡片主题（无需重建，保留进度展开状态） ──
         has_cards = False

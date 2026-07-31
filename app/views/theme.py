@@ -37,6 +37,7 @@ class AppTheme:
         "small": f"10pt '{FONT_FAMILY}'",
         "body_bold": f"12pt '{FONT_FAMILY}'",
     }
+    _font_scale = 1.0  # 字号缩放比例（0.85 ~ 1.3）
 
     # ── 主题观察者 ────────────────────────────────────────
     _listeners: list[Callable[[], None]] = []
@@ -47,6 +48,34 @@ class AppTheme:
         if listener not in cls._listeners:
             cls._listeners.append(listener)
 
+    @classmethod
+    def _notify_listeners(cls) -> None:
+        """通知所有监听器刷新样式"""
+        for listener in cls._listeners:
+            try:
+                listener()
+            except Exception as e:
+                logger.warning("主题监听器异常: %s", e)
+
+    # ── 字号缩放 ──────────────────────────────────────────
+
+    @classmethod
+    def set_font_scale(cls, scale: float) -> None:
+        """设置全局字号缩放比例并通知所有视图刷新"""
+        cls._font_scale = max(0.7, min(1.5, float(scale)))
+        cls.FONT = {
+            "title": f"{round(14 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
+            "body": f"{round(12 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
+            "small": f"{round(10 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
+            "body_bold": f"{round(12 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
+        }
+        cls._notify_listeners()
+
+    @classmethod
+    def font_scale(cls) -> float:
+        """当前字号缩放比例"""
+        return cls._font_scale
+
     # ── 主题开关 ──────────────────────────────────────────
 
     @classmethod
@@ -54,11 +83,7 @@ class AppTheme:
         """切换浅色/深色模式。dark=True → 深色"""
         cls._current_theme = "dark" if dark else "light"
         cls.C = AppConfig.DARK_COLORS if dark else AppConfig.COLORS
-        for listener in cls._listeners:
-            try:
-                listener()
-            except Exception as e:
-                logger.warning("主题切换监听器异常: %s", e)
+        cls._notify_listeners()
 
     @classmethod
     def is_dark(cls) -> bool:
@@ -84,7 +109,7 @@ class AppTheme:
             /* 全局 */
             QWidget {{
                 font-family: '{cls.FONT_FAMILY}';
-                font-size: 12pt;
+                font-size: {round(12 * cls._font_scale, 1)}pt;
                 color: {C["text_primary"]};
             }}
 
@@ -434,4 +459,236 @@ class AppTheme:
                 padding: 2px 6px;
                 font: {cls.FONT["body"]};
             }}
+        """
+
+    # ── 对话框通用样式（归档对话框等） ────────────────────
+
+    @classmethod
+    def dialog_frame_style(cls, selector: str = "QDialog") -> str:
+        """对话框整体框架"""
+        C = cls.C
+        return f"""
+            {selector} {{
+                background: {C["bg_card"]};
+                border: 1px solid {C["border"]};
+                border-radius: 8px;
+            }}
+        """
+
+    @classmethod
+    def dialog_title_bar_style(cls, selector: str = "QWidget") -> str:
+        """对话框标题栏"""
+        C = cls.C
+        return f"""
+            {selector} {{
+                background: {C["bg_primary"]};
+                border-bottom: 1px solid {C["border"]};
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+            }}
+        """
+
+    @classmethod
+    def dialog_input_style(cls) -> str:
+        """对话框搜索/输入框"""
+        C = cls.C
+        return f"""
+            QLineEdit {{
+                border: 1px solid {C["border"]};
+                border-radius: 4px;
+                padding: 6px 10px;
+                margin: 8px 12px;
+                background: {C["bg_card"]};
+            }}
+            QLineEdit:focus {{ border-color: {C["accent"]}; }}
+        """
+
+    @classmethod
+    def dialog_footer_style(cls) -> str:
+        """对话框底部统计栏"""
+        C = cls.C
+        return f"""
+            font: {cls.FONT["small"]};
+            color: {C["text_secondary"]};
+            background: {C["bg_primary"]};
+            border-top: 1px solid {C["border"]};
+            border-bottom-left-radius: 8px;
+            border-bottom-right-radius: 8px;
+        """
+
+    @classmethod
+    def archive_card_style(cls) -> str:
+        """归档条目卡片"""
+        C = cls.C
+        return f"""
+            QFrame {{
+                background: {C["bg_completed"]};
+                border-radius: 6px;
+                border: 1px solid {C["border"]};
+            }}
+        """
+
+    # ── 截止日期 / 标签 ──────────────────────────────────
+
+    @classmethod
+    def date_badge_style(cls, overdue: bool) -> str:
+        """截止日期徽标（过期红色，未过期蓝色）"""
+        C = cls.C
+        color = C["danger"] if overdue else C["accent"]
+        bg = C["danger"] if overdue else C["bg_hover"]
+        return f"""
+            QLabel {{
+                font: {cls.FONT["small"]};
+                color: {color};
+                background: {bg};
+                border-radius: 8px;
+                padding: 1px 6px;
+            }}
+        """
+
+    @classmethod
+    def tag_chip_style(cls) -> str:
+        """标签小圆片"""
+        C = cls.C
+        return f"""
+            QLabel {{
+                font: {cls.FONT["small"]};
+                color: {C["accent"]};
+                background: {C["bg_hover"]};
+                border-radius: 7px;
+                padding: 0px 6px;
+            }}
+        """
+
+    @classmethod
+    def tag_filter_btn(cls, active: bool) -> str:
+        """标签筛选按钮"""
+        C = cls.C
+        if active:
+            return f"""
+                QPushButton {{
+                    font: {cls.FONT["small"]};
+                    color: white;
+                    background: {C["accent"]};
+                    border-radius: 9px;
+                    padding: 2px 10px;
+                }}
+            """
+        return f"""
+            QPushButton {{
+                font: {cls.FONT["small"]};
+                color: {C["text_secondary"]};
+                background: {C["bg_card"]};
+                border: 1px solid {C["border"]};
+                border-radius: 9px;
+                padding: 2px 10px;
+            }}
+            QPushButton:hover {{
+                color: {C["accent"]};
+                border-color: {C["accent"]};
+            }}
+        """
+
+    # ── 便签 ──────────────────────────────────────────────
+
+    @classmethod
+    def note_card_style(cls, color_key: str) -> str:
+        """彩色便签卡片（color_key 见 AppConfig.NOTE_COLORS）"""
+        colors = AppConfig.NOTE_COLORS.get(color_key)
+        bg = colors[0] if not cls.is_dark() else colors[1]
+        border = cls.C["border"] if not cls.is_dark() else "#555555"
+        return f"""
+            QFrame {{
+                background: {bg};
+                border-radius: 6px;
+                border: 1px solid {border};
+            }}
+            QFrame:hover {{
+                border-color: {cls.C["accent"]};
+            }}
+        """
+
+    @classmethod
+    def note_text_style(cls) -> str:
+        """便签内容文本"""
+        return f"""
+            font: {cls.FONT["body"]};
+            color: {cls.C["text_primary"]};
+            background: transparent;
+        """
+
+    @classmethod
+    def note_meta_style(cls) -> str:
+        """便签时间元信息"""
+        return f"""
+            font: {cls.FONT["small"]};
+            color: {cls.C["text_disabled"]};
+            background: transparent;
+        """
+
+    @classmethod
+    def note_color_btn(cls, color_key: str, selected: bool) -> str:
+        """便签颜色选择圆点按钮"""
+        colors = AppConfig.NOTE_COLORS.get(color_key, ("#FFFFFF", "#2D2D2D"))
+        bg = colors[0] if not cls.is_dark() else colors[1]
+        border = "2px solid " + cls.C["accent"] if selected else f"1px solid {cls.C['border']}"
+        return f"""
+            QPushButton {{
+                background: {bg};
+                border: {border};
+                border-radius: 10px;
+                min-width: 20px;
+                max-width: 20px;
+                min-height: 20px;
+                max-height: 20px;
+                padding: 0;
+            }}
+        """
+
+    # ── 标签页 / 面板 ─────────────────────────────────────
+
+    @classmethod
+    def tab_bar_style(cls) -> str:
+        """待办/便签切换标签栏"""
+        C = cls.C
+        return f"""
+            QTabBar::tab {{
+                font: {cls.FONT["small"]};
+                color: {C["text_secondary"]};
+                background: transparent;
+                padding: 4px 16px;
+                border-bottom: 2px solid transparent;
+            }}
+            QTabBar::tab:selected {{
+                color: {C["accent"]};
+                border-bottom: 2px solid {C["accent"]};
+            }}
+            QTabBar::tab:hover {{
+                color: {C["text_primary"]};
+            }}
+        """
+
+    @classmethod
+    def popup_panel_style(cls) -> str:
+        """弹出面板（设置/统计等）"""
+        C = cls.C
+        return f"""
+            QFrame {{
+                background: {C["bg_card"]};
+                border: 1px solid {C["border"]};
+                border-radius: 6px;
+            }}
+            QLabel {{
+                background: transparent;
+            }}
+        """
+
+    @classmethod
+    def panel_label_style(cls) -> str:
+        """面板内文字标签"""
+        C = cls.C
+        return f"""
+            font: {cls.FONT["small"]};
+            color: {C["text_primary"]};
+            background: transparent;
         """

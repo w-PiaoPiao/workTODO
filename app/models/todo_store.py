@@ -3,6 +3,7 @@
 
 处理 JSON 文件的原子读写、CRUD 操作、归档管理。
 关键设计：
+- 内存缓存：load 后驻留内存，写操作只标记脏，由 flush() 统一落盘（防抖由控制器调度）
 - 原子写入：先写 .tmp 再 rename，防止文件损坏
 - 错误恢复：损坏文件自动备份为 .bak，返回空列表
 - 路径无关：通过 AppConfig 获取实际路径
@@ -13,134 +14,169 @@ from __future__ import annotations
 import json
 import shutil
 import logging
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 from app.config import AppConfig
-from app.models.todo_item import TodoItem, StoreError
+from app.models.todo_item import TodoItem, StoreError, CST
 
 logger = logging.getLogger(__name__)
 
 
 class TodoStore:
-    """待办事项数据存储"""
+    """待办事项数据存储（带内存缓存，写操作延迟落盘）"""
 
     def __init__(self):
         self._todos_path = AppConfig.todos_path()
         self._archive_path = AppConfig.archive_path()
+        self._todos: Optional[list[TodoItem]] = None   # 惰性缓存
+        self._archived: Optional[list[TodoItem]] = None
+        self._dirty_todos = False
+        self._dirty_archived = False
 
     # ── 公开接口 ──────────────────────────────────────────
 
     def load_todos(self) -> list[TodoItem]:
-        """加载活跃待办列表"""
-        return self._load_items(self._todos_path)
+        """加载活跃待办列表（首次读盘，之后返回缓存）"""
+        if self._todos is None:
+            self._todos = self._load_items(self._todos_path)
+        return self._todos
 
     def load_archived(self) -> list[TodoItem]:
-        """加载已归档列表"""
-        return self._load_items(self._archive_path)
+        """加载已归档列表（首次读盘，之后返回缓存）"""
+        if self._archived is None:
+            self._archived = self._load_items(self._archive_path)
+        return self._archived
+
+    def flush(self) -> None:
+        """将有修改的列表原子写入磁盘（防抖落盘的终点）"""
+        if self._dirty_todos:
+            self._save_items(self._todos_path, self._todos)
+            self._dirty_todos = False
+        if self._dirty_archived:
+            self._save_items(self._archive_path, self._archived)
+            self._dirty_archived = False
 
     def save_todos(self, items: list[TodoItem]) -> None:
-        """保存活跃待办列表"""
+        """保存活跃待办列表（更新缓存并立即写盘）"""
+        self._todos = items
+        self._dirty_todos = False
         self._save_items(self._todos_path, items)
 
     def save_archived(self, items: list[TodoItem]) -> None:
-        """保存归档列表"""
+        """保存归档列表（更新缓存并立即写盘）"""
+        self._archived = items
+        self._dirty_archived = False
         self._save_items(self._archive_path, items)
 
     def add_item(self, item: TodoItem) -> None:
-        """添加一条新待办（自动分配 position）"""
+        """添加一条新待办（自动分配 position，标记脏）"""
         items = self.load_todos()
-        # 新项排最后
         max_pos = max((i.position for i in items), default=0)
         item.position = max_pos + 1
         items.append(item)
-        self.save_todos(items)
+        self._dirty_todos = True
 
     def reorder_items(self, ordered_ids: list[str]) -> None:
         """按 ordered_ids 顺序重新排列待办（positions 设为 0,1,2,...）"""
         items = self.load_todos()
         id_to_item = {i.id: i for i in items}
-        # 分配新位置
         for idx, item_id in enumerate(ordered_ids):
             if item_id in id_to_item:
                 id_to_item[item_id].position = idx
-        # 处理不在 ordered_ids 中的项
         next_pos = len(ordered_ids)
         for item in items:
             if item.id not in ordered_ids:
                 item.position = next_pos
                 next_pos += 1
-        self.save_todos(items)
+        self._dirty_todos = True
 
     def update_item(self, updated: TodoItem) -> None:
-        """更新一条待办（按 id 匹配）"""
+        """更新一条待办（按 id 匹配，标记脏）"""
         items = self.load_todos()
         for i, item in enumerate(items):
             if item.id == updated.id:
                 items[i] = updated
-                self.save_todos(items)
+                self._dirty_todos = True
                 return
-        # 也检查归档
         archived = self.load_archived()
         for i, item in enumerate(archived):
             if item.id == updated.id:
                 archived[i] = updated
-                self.save_archived(archived)
+                self._dirty_archived = True
                 return
         raise StoreError(f"未找到 id={updated.id} 的待办事项")
 
     def delete_item(self, item_id: str) -> bool:
-        """删除一条待办，返回是否找到并删除"""
+        """删除一条待办，返回是否找到并删除（标记脏）"""
         items = self.load_todos()
         new_items = [i for i in items if i.id != item_id]
         if len(new_items) < len(items):
-            self.save_todos(new_items)
+            self._todos = new_items
+            self._dirty_todos = True
             return True
-        # 检查归档
         archived = self.load_archived()
         new_archived = [i for i in archived if i.id != item_id]
         if len(new_archived) < len(archived):
-            self.save_archived(new_archived)
+            self._archived = new_archived
+            self._dirty_archived = True
             return True
         return False
 
     def archive_item(self, item: TodoItem) -> None:
-        """办结一条待办并移入归档"""
+        """办结一条待办并移入归档（标记脏）"""
         item.status = "completed"
-        # 从活跃列表移除
         items = self.load_todos()
-        items = [i for i in items if i.id != item.id]
-        self.save_todos(items)
-        # 追加到归档
+        self._todos = [i for i in items if i.id != item.id]
+        self._dirty_todos = True
         archived = self.load_archived()
         archived.append(item)
-        self.save_archived(archived)
+        self._dirty_archived = True
 
     def restore_item(self, item_id: str) -> Optional[TodoItem]:
-        """从归档恢复到活跃列表，返回恢复的项目"""
+        """从归档恢复到活跃列表，返回恢复的项目（标记脏）"""
         archived = self.load_archived()
         for i, item in enumerate(archived):
             if item.id == item_id:
                 item.status = "active"
                 item.completed_at = None
                 archived.pop(i)
-                self.save_archived(archived)
-                # 加入活跃列表
+                self._dirty_archived = True
                 items = self.load_todos()
                 items.append(item)
-                self.save_todos(items)
+                self._dirty_todos = True
                 return item
         return None
 
     def get_stats(self) -> dict:
-        """获取统计信息"""
+        """获取统计信息（含今日/本周完成数）"""
         todos = self.load_todos()
         archived = self.load_archived()
+        today = datetime.now(CST).date()
+        week_start = today - timedelta(days=today.weekday())
+
+        def _completed_on(items, start, end=None):
+            count = 0
+            for t in items:
+                if not t.completed_at:
+                    continue
+                try:
+                    d = datetime.fromisoformat(t.completed_at).date()
+                except (ValueError, TypeError):
+                    continue
+                if d >= start and (end is None or d <= end):
+                    count += 1
+            return count
+
         return {
             "active_count": len([t for t in todos if t.is_active]),
             "completed_count": len([t for t in todos if t.is_completed]),
             "archived_count": len(archived),
             "total_count": len(todos),
+            "today_completed": _completed_on(archived, today),
+            "week_completed": _completed_on(archived, week_start),
+            "total_completed": len(archived),
         }
 
     def auto_archive_old(self, days: int = 30) -> int:
@@ -148,8 +184,7 @@ class TodoStore:
 
         条件：创建超过 days 天，且最近一条进度也超过 days 天（若无进度则只看创建时间）
         """
-        from datetime import datetime, timezone, timedelta
-        now = datetime.now(timezone(timedelta(hours=8), "CST"))
+        now = datetime.now(CST)
         cutoff = now - timedelta(days=days)
 
         todos = self.load_todos()
@@ -166,7 +201,6 @@ class TodoStore:
                 if item.progress:
                     last_progress = datetime.fromisoformat(item.progress[-1].timestamp)
                     if last_progress >= cutoff:
-                        # 近期有进度更新，保留
                         keep.append(item)
                         continue
 
@@ -179,12 +213,70 @@ class TodoStore:
         if not old:
             return 0
 
-        self.save_todos(keep)
+        self._todos = keep
+        self._dirty_todos = True
         archived = self.load_archived()
         archived.extend(old)
-        self.save_archived(archived)
+        self._dirty_archived = True
         logger.info("自动归档 %d 条超过 %d 天的待办", len(old), days)
         return len(old)
+
+    # ── 数据备份（导出/导入） ────────────────────────────
+
+    def export_all(self, path: Path) -> dict:
+        """导出全部数据（活跃 + 归档）到单个 JSON 文件，返回统计信息"""
+        from app.models.todo_item import _now_iso
+        data = {
+            "app": AppConfig.APP_NAME,
+            "version": AppConfig.APP_VERSION,
+            "exported_at": _now_iso(),
+            "todos": [t.to_dict() for t in self.load_todos()],
+            "archived": [t.to_dict() for t in self.load_archived()],
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(".tmp")
+        try:
+            tmp_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            tmp_path.replace(path)
+        except (IOError, OSError, PermissionError) as e:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise StoreError(f"导出失败: {e}")
+        return {
+            "todos": len(data["todos"]),
+            "archived": len(data["archived"]),
+        }
+
+    def import_all(self, path: Path) -> tuple[int, int]:
+        """从备份文件导入全部数据（替换现有数据并立即落盘），返回 (待办数, 归档数)"""
+        try:
+            raw = path.read_text("utf-8")
+            data = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+            raise StoreError(f"导入文件无效: {e}")
+
+        if not isinstance(data, dict) or not isinstance(data.get("todos"), list):
+            raise StoreError("导入文件格式不正确")
+
+        def _parse_items(entries):
+            items = []
+            for entry in entries:
+                try:
+                    items.append(TodoItem.from_dict(entry))
+                except (KeyError, TypeError, ValueError) as e:
+                    logger.warning("导入时跳过无效条目: %s", e)
+            return items
+
+        todos = _parse_items(data.get("todos", []))
+        archived = _parse_items(data.get("archived", []))
+        # 替换缓存并立即落盘
+        self.save_todos(todos)
+        self.save_archived(archived)
+        logger.info("导入完成：%d 条待办，%d 条归档", len(todos), len(archived))
+        return len(todos), len(archived)
 
     # ── 内部实现 ──────────────────────────────────────────
 
@@ -227,7 +319,6 @@ class TodoStore:
         策略：写入 .tmp 临时文件 → 重命名为目标文件
         如果写入中途失败，原始文件不受影响。
         """
-        # 确保父目录存在
         path.parent.mkdir(parents=True, exist_ok=True)
 
         tmp_path = path.with_suffix(".tmp")

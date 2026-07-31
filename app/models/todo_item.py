@@ -14,19 +14,19 @@ from typing import Optional
 
 
 # ── 时区：东八区（北京时间） ─────────────────────────────────
-_CST = timezone(timedelta(hours=8), "CST")
+CST = timezone(timedelta(hours=8), "CST")
 
 
 def _now_iso() -> str:
     """返回当前时间的 ISO-8601 字符串（北京时间）"""
-    return datetime.now(_CST).isoformat(timespec="seconds")
+    return datetime.now(CST).isoformat(timespec="seconds")
 
 
 def _format_relative(iso_str: str) -> str:
     """将 ISO 时间转为友好中文描述"""
     try:
         dt = datetime.fromisoformat(iso_str)
-        now = datetime.now(_CST)
+        now = datetime.now(CST)
         delta = now - dt
 
         if delta < timedelta(minutes=1):
@@ -90,6 +90,8 @@ class TodoItem:
     progress: list[ProgressEntry] = field(default_factory=list)
     sticky: bool = False  # 是否置顶
     position: int = 0     # 手动排序位置（0=最前）
+    due_date: Optional[str] = None  # 截止日期 "YYYY-MM-DD"
+    tags: list[str] = field(default_factory=list)  # 分类标签（#标签）
 
     # ── 属性 ──────────────────────────────────────────────
 
@@ -104,6 +106,35 @@ class TodoItem:
     @property
     def is_archived(self) -> bool:
         return self.status == "archived"
+
+    @property
+    def is_overdue(self) -> bool:
+        """是否已超过截止日期（仅对有效截止日期判断）"""
+        if not self.due_date:
+            return False
+        try:
+            due = datetime.strptime(self.due_date, "%Y-%m-%d").date()
+        except ValueError:
+            return False
+        return due < datetime.now(CST).date()
+
+    @property
+    def due_display(self) -> str:
+        """截止日期友好显示（含年月日）"""
+        if not self.due_date:
+            return ""
+        try:
+            due = datetime.strptime(self.due_date, "%Y-%m-%d").date()
+        except ValueError:
+            return self.due_date
+        if self.is_overdue:
+            return f"已过期 {self.due_date}"
+        today = datetime.now(CST).date()
+        if due == today:
+            return f"今天到期"
+        if (due - today).days == 1:
+            return f"明天到期"
+        return self.due_date
 
     @property
     def age_display(self) -> str:
@@ -136,6 +167,8 @@ class TodoItem:
             "progress": [p.to_dict() for p in self.progress],
             "sticky": self.sticky,
             "position": self.position,
+            "due_date": self.due_date,
+            "tags": list(self.tags),
         }
 
     @classmethod
@@ -152,4 +185,6 @@ class TodoItem:
             ],
             sticky=data.get("sticky", False),
             position=data.get("position", 0),
+            due_date=data.get("due_date"),
+            tags=[t for t in data.get("tags", []) if isinstance(t, str)],
         )

@@ -11,11 +11,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from PySide6.QtCore import Signal, Qt, QMimeData, QPoint, QRect, QEvent
 from PySide6.QtGui import QDrag, QMouseEvent
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QPushButton,
     QLineEdit, QWidget, QApplication, QGraphicsOpacityEffect,
+    QInputDialog, QMessageBox, QLabel,
 )
 from app.config import AppConfig
 from app.views.theme import AppTheme
@@ -34,6 +37,7 @@ class TodoCard(QFrame):
     signal_title_changed = Signal(str, str)  # item_id, new_title
     signal_progress_edited = Signal(str, str, str)  # item_id, entry_id, new_text
     signal_progress_deleted = Signal(str, str)  # item_id, entry_id
+    signal_due_date_set = Signal(str, str)  # item_id, due_date（空字符串=清除）
 
     def __init__(self, item: TodoItem, parent=None):
         super().__init__(parent)
@@ -68,6 +72,12 @@ class TodoCard(QFrame):
         """)
         # ElidedLabel 已设置 Expanding + minimumWidth(0)
 
+        self._date_btn = QPushButton("📅")
+        self._date_btn.setFixedSize(24, 24)
+        self._date_btn.setToolTip("设置截止日期")
+        self._date_btn.setStyleSheet(AppTheme.icon_btn("12px"))
+        self._date_btn.clicked.connect(self._on_set_due_date)
+
         self._sticky_btn = QPushButton("↑")
         self._sticky_btn.setFixedSize(24, 24)
         self._sticky_btn.setToolTip("置顶")
@@ -87,11 +97,28 @@ class TodoCard(QFrame):
         self._delete_btn.clicked.connect(self._on_delete)
 
         top_row.addWidget(self._title_label, stretch=1)
+        top_row.addWidget(self._date_btn)
         top_row.addWidget(self._sticky_btn)
         top_row.addWidget(self._complete_btn)
         top_row.addWidget(self._delete_btn)
 
         main_layout.addLayout(top_row)
+
+        # ── 元信息行：标签 chips + 截止日期徽标 ─────────────
+        self._meta_row = QHBoxLayout()
+        self._meta_row.setSpacing(6)
+        self._tags_container = QWidget()
+        self._tags_layout = QHBoxLayout()
+        self._tags_layout.setContentsMargins(0, 0, 0, 0)
+        self._tags_layout.setSpacing(4)
+        self._tags_container.setLayout(self._tags_layout)
+        self._due_label = QLabel()
+        self._due_label.hide()
+
+        self._meta_row.addWidget(self._tags_container)
+        self._meta_row.addStretch(1)
+        self._meta_row.addWidget(self._due_label)
+        main_layout.addLayout(self._meta_row)
 
         # ── 进度区域 ──────────────────────────────────────
         self._progress_widget = ProgressWidget()
@@ -141,6 +168,7 @@ class TodoCard(QFrame):
             self._progress_input.setVisible(False)
             self._progress_btn.setVisible(False)
             self._sticky_btn.setVisible(False)
+            self._date_btn.setVisible(False)
 
         self._title_label.setFullText(item.title)
         # 卡片级别 tooltip：ElidedLabel 的 tooltip 因 WA_TransparentForMouseEvents 不可用，
@@ -150,8 +178,38 @@ class TodoCard(QFrame):
         # 置顶状态
         self._sticky_btn.setStyleSheet(AppTheme.toggle_btn(item.sticky))
 
+        # 截止日期徽标
+        if item.due_date:
+            self._due_label.setText(item.due_display)
+            self._due_label.setStyleSheet(AppTheme.date_badge_style(item.is_overdue))
+            self._due_label.show()
+            self._date_btn.setToolTip(f"截止 {item.due_date}，点击修改/清除")
+        else:
+            self._due_label.hide()
+            self._date_btn.setToolTip("设置截止日期")
+
+        # 标签 chips
+        self._rebuild_tags(item.tags)
+
         # 填充进度
         self._progress_widget.set_entries(item.progress)
+
+    def _rebuild_tags(self, tags: list[str]) -> None:
+        """重建标签 chips 行"""
+        # 清空旧 chips（保留布局对象）
+        while self._tags_layout.count():
+            item = self._tags_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        if not tags:
+            self._tags_container.hide()
+            return
+        for tag in tags:
+            chip = QLabel(f"#{tag}")
+            chip.setStyleSheet(AppTheme.tag_chip_style())
+            self._tags_layout.addWidget(chip)
+        self._tags_container.show()
 
     # ── 交互事件 ──────────────────────────────────────────
 
@@ -164,6 +222,33 @@ class TodoCard(QFrame):
     def _on_toggle_sticky(self) -> None:
         # 只发射信号，由控制器处理翻转和刷新
         self.signal_sticky_toggled.emit(self._item.id)
+
+    def _on_set_due_date(self) -> None:
+        """弹出截止日期输入框（留空清除）"""
+        current = self._item.due_date or ""
+        text, ok = QInputDialog.getText(
+            self.window() or self,
+            "设置截止日期",
+            "截止日期（格式 YYYY-MM-DD，留空清除）：",
+            QLineEdit.Normal,
+            current,
+        )
+        if not ok:
+            return
+        text = text.strip()
+        if not text:
+            self.signal_due_date_set.emit(self._item.id, "")
+            return
+        try:
+            datetime.strptime(text, "%Y-%m-%d")
+        except ValueError:
+            QMessageBox.warning(
+                self.window() or self,
+                "日期格式错误",
+                "请使用 YYYY-MM-DD 格式，例如 2026-08-05",
+            )
+            return
+        self.signal_due_date_set.emit(self._item.id, text)
 
     # ── 拖拽支持 ──────────────────────────────────────────
 
@@ -378,10 +463,19 @@ class TodoCard(QFrame):
         self._sticky_btn.setStyleSheet(AppTheme.toggle_btn(item.sticky))
         self._complete_btn.setStyleSheet(AppTheme.outline_btn())
         self._delete_btn.setStyleSheet(AppTheme.danger_btn())
+        self._date_btn.setStyleSheet(AppTheme.icon_btn("12px"))
 
         # 进度输入区域
         self._progress_input.setStyleSheet(AppTheme.progress_input_style())
         self._progress_btn.setStyleSheet(AppTheme.icon_btn("12px"))
+
+        # 截止日期徽标 / 标签 chips
+        if item.due_date:
+            self._due_label.setStyleSheet(AppTheme.date_badge_style(item.is_overdue))
+        for i in range(self._tags_layout.count()):
+            w = self._tags_layout.itemAt(i).widget()
+            if isinstance(w, QLabel):
+                w.setStyleSheet(AppTheme.tag_chip_style())
 
         # 进度子组件（轻量重建）
         self._progress_widget.reapply_theme()

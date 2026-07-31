@@ -8,19 +8,22 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QTimer, QSettings
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QMessageBox, QInputDialog,
+    QFileDialog,
 )
-from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QPainterPath, QPen, QColor, QFont, QShortcut, QKeySequence, QPalette
+from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QPainterPath, QPen, QColor, QFont, QShortcut, QKeySequence, QPalette, QCursor
 
 from app.config import AppConfig
-from app.models.todo_item import TodoItem, ProgressEntry, StoreError
+from app.models.todo_item import TodoItem, ProgressEntry, StoreError, CST
 from app.models.todo_store import TodoStore
+from app.models.note import Note, NoteStore
 from app.views.theme import AppTheme
 from app.views.main_window import MainWindow
 from app.views.collapsed_view import CollapsedView
@@ -34,19 +37,40 @@ logger = logging.getLogger(__name__)
 class AppController(QObject):
     """应用控制器"""
 
+    # 主题模式轮换顺序
+    THEME_CYCLE = ["light", "dark", "auto"]
+    # 系统主题注册表
+    THEME_REG_KEY = (
+        r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+    )
+    THEME_REG_VALUE = "AppsUseLightTheme"
+
     def __init__(self):
         super().__init__()
 
-        # ── 从持久化存储加载主题偏好 ──────────────────────
+        # ── 从持久化存储加载主题偏好与字号 ──────────────
         settings = QSettings("Personal", "待办事项和便签")
-        dark_theme = settings.value("theme/dark", False, type=bool)
-        AppTheme.switch_theme(dark_theme)
+        mode = settings.value("theme/mode", "")
+        if not mode:
+            # 兼容旧版本（仅存 theme/dark 布尔值）
+            old_dark = settings.value("theme/dark", False, type=bool)
+            mode = "dark" if old_dark else "auto"
+        self._theme_mode = mode
+        dark = self._system_theme_is_dark() if mode == "auto" else mode == "dark"
+        AppTheme.switch_theme(dark)
+
+        font_scale = settings.value(
+            "ui/font_scale", AppConfig.FONT_SCALE_DEFAULT, type=float)
+        if font_scale != AppConfig.FONT_SCALE_DEFAULT:
+            AppTheme.set_font_scale(font_scale)
+
         app = QApplication.instance()
         app.setStyleSheet(AppTheme.global_qss())
         AppTheme.apply_palette(app)
 
         # ── 数据层 ────────────────────────────────────────
         self._store = TodoStore()
+        self._note_store = NoteStore()
 
         # ── UI 层 ─────────────────────────────────────────
         self._window = MainWindow()
@@ -60,8 +84,16 @@ class AppController(QObject):
         self._tray_icon = None
         self._setup_tray()
 
-        # ── 搜索状态 ──────────────────────────────────────
+        # ── 搜索 / 标签状态 ───────────────────────────────
         self._search_query = ""
+        self._active_tag = ""
+
+        # ── 数据落盘防抖 ──────────────────────────────────
+        self._save_timer = QTimer()
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(AppConfig.SAVE_DEBOUNCE_MS)
+        self._save_timer.timeout.connect(self._flush_store)
+        app.aboutToQuit.connect(self._flush_store)
 
         # ── 加载数据 ──────────────────────────────────────
         self._load_data()
@@ -69,14 +101,32 @@ class AppController(QObject):
         # ── 连接信号 ──────────────────────────────────────
         self._connect_signals()
 
+        # ── 定时任务：系统主题跟随 / 截止日期提醒 ────────
+        self._theme_poll_timer = QTimer()
+        self._theme_poll_timer.setInterval(30_000)  # 30 秒轮询系统主题
+        self._theme_poll_timer.timeout.connect(self._poll_system_theme)
+        self._theme_poll_timer.start()
+
+        self._due_check_timer = QTimer()
+        self._due_check_timer.setInterval(AppConfig.DUE_REMIND_CHECK_MS)
+        self._due_check_timer.timeout.connect(self._check_due_reminders)
+        self._due_check_timer.start()
+
         # ── 开机自启状态（在信号连接之后，显示窗口之前） ──
         self._init_autostart()
+
+        # ── 同步视图初始状态 ──────────────────────────────
+        self._expanded_view.set_theme_mode(self._theme_mode)
+        self._expanded_view.set_font_scale_value(AppTheme.font_scale())
 
         # ── 显示窗口 ──────────────────────────────────
         self._window.show()
 
         # ── 恢复窗口状态（置顶、位置等）───────────────
         self._restore_window_state()
+
+        # ── 启动时检查截止日期提醒 ─────────────────────
+        self._check_due_reminders()
 
     # ── 公共访问 ──────────────────────────────────────────
 
@@ -89,39 +139,85 @@ class AppController(QObject):
     def _load_data(self) -> None:
         """加载数据并刷新视图"""
         try:
-            # 自动归档超过 30 天的旧项目
+            # 自动归档超过 30 天的旧项目（随后立即落盘）
             self._store.auto_archive_old(AppConfig.AUTO_ARCHIVE_DAYS)
+            self._store.flush()
 
             self._todos = self._store.load_todos()
             self._archived = self._store.load_archived()
+            self._notes = self._note_store.load_notes()
         except StoreError as e:
             logger.error("加载数据失败: %s", e)
             self._todos = []
             self._archived = []
+            self._notes = []
             self._show_error(f"数据加载失败: {e}")
 
         self._refresh_views()
 
-    def _refresh_views(self) -> None:
-        """刷新所有视图（保持搜索过滤状态）"""
-        # 如有活跃搜索，先过滤再传
-        if self._search_query:
-            q = self._search_query.lower()
-            filtered = [
-                i for i in self._todos
-                if i.is_active
-                and (q in i.title.lower()
-                     or any(q in p.text.lower() for p in i.progress))
+    def _filtered_items(self) -> list[TodoItem]:
+        """按搜索词 + 标签过滤活跃待办（视图展示的列表）"""
+        result = [i for i in self._todos if i.is_active]
+        q = self._search_query.lower()
+        if q:
+            result = [
+                i for i in result
+                if q in i.title.lower()
+                or any(q in p.text.lower() for p in i.progress)
             ]
-            self._expanded_view.refresh(filtered, self._search_query)
-        else:
-            self._expanded_view.refresh(self._todos)
+        if self._active_tag:
+            result = [i for i in result if self._active_tag in i.tags]
+        return result
+
+    def _collect_tags(self) -> list[str]:
+        """收集所有活跃待办的标签（保持出现顺序去重）"""
+        tags: list[str] = []
+        for t in self._todos:
+            if not t.is_active:
+                continue
+            for tag in t.tags:
+                if tag not in tags:
+                    tags.append(tag)
+        return tags
+
+    @staticmethod
+    def _extract_tags(title: str) -> list[str]:
+        """从标题中提取 #标签（#中文、#英文、#数字）"""
+        tags: list[str] = []
+        for m in re.finditer(r"#([\u4e00-\u9fa5A-Za-z0-9_\-]+)", title):
+            tag = m.group(1)
+            if tag and tag not in tags:
+                tags.append(tag)
+        return tags
+
+    def _refresh_views(self) -> None:
+        """刷新所有视图（保持搜索/标签过滤状态）"""
+        filtered = self._filtered_items()
+        self._expanded_view.refresh(filtered, self._search_query)
+        self._expanded_view.update_tag_filters(self._collect_tags(), self._active_tag)
 
         # 更新计数
         active_count = len([t for t in self._todos if t.is_active])
         archived_count = len(self._archived)
         self._collapsed_view.update_count(active_count)
         self._expanded_view.update_stats(active_count, archived_count)
+
+    def _refresh_notes(self) -> None:
+        """刷新便签视图"""
+        self._expanded_view.set_notes(self._notes)
+
+    # ── 数据落盘（防抖） ──────────────────────────────────
+
+    def _schedule_save(self) -> None:
+        """安排延迟落盘（高频操作合并为一次写入）"""
+        self._save_timer.start()
+
+    def _flush_store(self) -> None:
+        """立即落盘（防抖到期 / 退出时调用）"""
+        try:
+            self._store.flush()
+        except StoreError as e:
+            logger.error("保存数据失败: %s", e)
 
     # ── 信号连接 ──────────────────────────────────────────
 
@@ -150,9 +246,26 @@ class AppController(QObject):
         self._expanded_view.signal_title_changed.connect(self._on_title_changed)
         self._expanded_view.signal_progress_edited.connect(self._on_edit_progress)
         self._expanded_view.signal_progress_deleted.connect(self._on_delete_progress)
-        self._expanded_view.signal_theme_toggled.connect(self._on_toggle_theme)
+        self._expanded_view.signal_theme_mode_clicked.connect(
+            self._on_theme_mode_clicked
+        )
         self._expanded_view.signal_autostart_toggled.connect(self._on_toggle_autostart)
         self._expanded_view.signal_opacity_changed.connect(self._on_opacity_changed)
+        self._expanded_view.signal_opacity_committed.connect(
+            self._on_opacity_committed
+        )
+        self._expanded_view.signal_font_scale_changed.connect(
+            self._on_font_scale_changed
+        )
+        self._expanded_view.signal_due_date_set.connect(self._on_due_date_set)
+        self._expanded_view.signal_tag_filter_clicked.connect(
+            self._on_tag_filter_clicked
+        )
+        self._expanded_view.signal_stats_requested.connect(self._on_stats_requested)
+        self._expanded_view.signal_backup_clicked.connect(self._on_backup_clicked)
+        self._expanded_view.signal_notes_added.connect(self._on_notes_added)
+        self._expanded_view.signal_note_updated.connect(self._on_note_updated)
+        self._expanded_view.signal_note_deleted.connect(self._on_note_deleted)
 
         # 主窗口
         self._window.signal_close_requested.connect(self._on_close_requested)
@@ -172,37 +285,36 @@ class AppController(QObject):
     # ── 核心业务逻辑 ──────────────────────────────────────
 
     def _on_add_item(self, title: str) -> None:
-        """添加新待办"""
+        """添加新待办（自动提取 #标签）"""
         title = title.strip()
         if not title:
             return
 
         item = TodoItem(title=title)
+        item.tags = self._extract_tags(title)
         try:
             self._store.add_item(item)  # add_item 会修改 item.position（原地）
-            self._todos.append(item)
+            self._todos = self._store.load_todos()
+            self._schedule_save()
             self._refresh_views()
-            # 展开模式下滚动到底部
             self._show_notification(f"已添加：{title[:20]}")
         except StoreError as e:
             self._show_error(f"添加失败: {e}")
 
     def _on_complete_item(self, item_id: str) -> None:
         """办结待办并归档"""
-        # 找到项目
         item = next((t for t in self._todos if t.id == item_id), None)
         if not item:
             return
 
-        cst = timezone(timedelta(hours=8), "CST")
         original_completed_at = item.completed_at
-        item.completed_at = datetime.now(cst).isoformat(timespec="seconds")
+        item.completed_at = datetime.now(CST).isoformat(timespec="seconds")
 
         try:
             self._store.archive_item(item)
-            # 就地更新内存列表，避免全量重读
-            self._todos = [t for t in self._todos if t.id != item.id]
-            self._archived.append(item)
+            self._todos = self._store.load_todos()
+            self._archived = self._store.load_archived()
+            self._schedule_save()
             self._refresh_views()
             self._show_notification("已办结 ✓")
         except StoreError as e:
@@ -211,7 +323,6 @@ class AppController(QObject):
 
     def _on_delete_item(self, item_id: str) -> None:
         """删除待办（带确认）"""
-        # 获取标题用于确认框
         item = next((t for t in self._todos if t.id == item_id), None)
         title = item.title if item else "此待办事项"
 
@@ -227,9 +338,9 @@ class AppController(QObject):
 
         try:
             self._store.delete_item(item_id)
-            # 就地更新内存列表
-            self._todos = [t for t in self._todos if t.id != item_id]
-            self._archived = [t for t in self._archived if t.id != item_id]
+            self._todos = self._store.load_todos()
+            self._archived = self._store.load_archived()
+            self._schedule_save()
             self._refresh_views()
             self._show_notification("已删除")
         except StoreError as e:
@@ -250,7 +361,7 @@ class AppController(QObject):
 
         try:
             self._store.update_item(item)
-            # item 已在 self._todos 中原地更新，无需全量重读
+            self._schedule_save()
             self._refresh_views()
         except StoreError as e:
             item.progress.pop()  # 回滚内存状态
@@ -275,7 +386,7 @@ class AppController(QObject):
 
         try:
             self._store.update_item(item)
-            # item 已在 self._todos 中原地更新
+            self._schedule_save()
             self._refresh_views()  # 刷新搜索过滤等视图状态
             self._show_notification("进度已更新")
         except StoreError as e:
@@ -289,7 +400,6 @@ class AppController(QObject):
         if not item:
             return
 
-        # 找到要删除的条目索引
         idx = next((i for i, p in enumerate(item.progress) if p.id == entry_id), None)
         if idx is None:
             return
@@ -298,6 +408,7 @@ class AppController(QObject):
 
         try:
             self._store.update_item(item)
+            self._schedule_save()
             self._refresh_views()
             self._show_notification("进度已删除")
         except StoreError as e:
@@ -306,35 +417,51 @@ class AppController(QObject):
             self._show_error(f"删除进度失败: {e}")
 
     def _on_title_changed(self, item_id: str, new_title: str) -> None:
-        """待办标题内联编辑后持久化"""
+        """待办标题内联编辑后持久化（重新提取标签）"""
         item = next((t for t in self._todos if t.id == item_id), None)
         if not item:
             return
         old_title = item.title
+        old_tags = list(item.tags)
         item.title = new_title
+        item.tags = self._extract_tags(new_title)
         try:
             self._store.update_item(item)
+            self._schedule_save()
             # 无需刷新视图，卡片已就地更新
-            self._show_notification(f"已更新标题")
+            self._show_notification("已更新标题")
         except StoreError as e:
             item.title = old_title  # 回滚内存状态
+            item.tags = old_tags
             self._refresh_views()  # 刷新视图以恢复旧标题显示
             self._show_error(f"更新标题失败: {e}")
+
+    def _on_due_date_set(self, item_id: str, due_date: str) -> None:
+        """设置/清除截止日期"""
+        item = next((t for t in self._todos if t.id == item_id), None)
+        if not item:
+            return
+        old_due = item.due_date
+        item.due_date = due_date or None
+        try:
+            self._store.update_item(item)
+            self._schedule_save()
+            self._refresh_views()
+            self._show_notification("已设置截止日期" if item.due_date else "已清除截止日期")
+        except StoreError as e:
+            item.due_date = old_due  # 回滚内存状态
+            self._refresh_views()
+            self._show_error(f"设置截止日期失败: {e}")
 
     def _on_search(self, query: str) -> None:
         """搜索待办（在控制器中过滤，视图只负责展示）"""
         self._search_query = query
-        if not query:
-            self._expanded_view.refresh(self._todos, "")
-            return
-        q = query.lower()
-        filtered = [
-            i for i in self._todos
-            if i.is_active
-            and (q in i.title.lower()
-                 or any(q in p.text.lower() for p in i.progress))
-        ]
-        self._expanded_view.refresh(filtered, query)
+        self._expanded_view.refresh(self._filtered_items(), query)
+
+    def _on_tag_filter_clicked(self, tag: str) -> None:
+        """标签筛选切换"""
+        self._active_tag = tag
+        self._refresh_views()
 
     def _on_show_archive(self) -> None:
         """显示归档对话框"""
@@ -347,9 +474,9 @@ class AppController(QObject):
         try:
             restored = self._store.restore_item(item_id)
             if restored:
-                # 就地更新内存列表
-                self._archived = [a for a in self._archived if a.id != item_id]
-                self._todos.append(restored)
+                self._todos = self._store.load_todos()
+                self._archived = self._store.load_archived()
+                self._schedule_save()
                 self._refresh_views()
                 self._show_notification(f"已恢复：{restored.title[:20]}")
         except StoreError as e:
@@ -364,9 +491,8 @@ class AppController(QObject):
         item.sticky = not item.sticky
         try:
             self._store.update_item(item)
-            # item 已在 self._todos 中原地更新
+            self._schedule_save()
             if self._window.mode == "expanded":
-                # 带动画的置顶切换
                 self._expanded_view.animate_sticky(item_id, self._todos)
             else:
                 self._refresh_views()
@@ -378,20 +504,8 @@ class AppController(QObject):
         """接收拖放排序后的新顺序并持久化"""
         try:
             self._store.reorder_items(ordered_ids)
-            # reorder_items 只更新了磁盘上新读取的对象的 position，
-            # 需要同步更新内存中 self._todos 对象的 position 值
-            id_map = {t.id: t for t in self._todos}
-            for idx, item_id in enumerate(ordered_ids):
-                if item_id in id_map:
-                    id_map[item_id].position = idx
-
-            # 保持 self._todos 中的全部条目（ordered_ids 仅含可见的活跃卡片，
-            # 不可见的已完成/已归档项不应丢失）
-            seen = set(ordered_ids)
-            reordered = [id_map[i] for i in ordered_ids if i in id_map]
-            reordered += [t for t in self._todos if t.id not in seen]
-            self._todos = reordered
-
+            self._todos = self._store.load_todos()
+            self._schedule_save()
             self._refresh_views()
         except StoreError as e:
             self._show_error(f"排序失败: {e}")
@@ -405,6 +519,158 @@ class AppController(QObject):
         )
         if ok and title.strip():
             self._on_add_item(title.strip())
+
+    # ── 统计 ──────────────────────────────────────────────
+
+    def _on_stats_requested(self) -> None:
+        """请求并显示统计面板"""
+        try:
+            stats = self._store.get_stats()
+            self._expanded_view.show_stats(stats)
+        except StoreError as e:
+            self._show_error(f"获取统计失败: {e}")
+
+    # ── 数据备份（导出 / 导入） ──────────────────────────
+
+    def _on_backup_clicked(self) -> None:
+        """弹出备份菜单（导出 / 导入）"""
+        menu = QMenu(self._window)
+        export_action = QAction("导出数据备份...", menu)
+        export_action.triggered.connect(self._on_export_data)
+        import_action = QAction("导入数据备份...", menu)
+        import_action.triggered.connect(self._on_import_data)
+        menu.addAction(export_action)
+        menu.addSeparator()
+        menu.addAction(import_action)
+        menu.exec(QCursor.pos())
+
+    def _on_export_data(self) -> None:
+        """导出全部数据到 JSON 文件"""
+        path, _ = QFileDialog.getSaveFileName(
+            self._window,
+            "导出数据备份",
+            str(Path.home() / "待办备份.json"),
+            "JSON 文件 (*.json)",
+        )
+        if not path:
+            return
+        try:
+            stats = self._store.export_all(Path(path))
+            self._show_notification(
+                f"已导出 {stats['todos']} 条待办、{stats['archived']} 条归档")
+        except StoreError as e:
+            self._show_error(f"导出失败: {e}")
+
+    def _on_import_data(self) -> None:
+        """从备份文件导入数据（替换现有待办与归档，便签不受影响）"""
+        path, _ = QFileDialog.getOpenFileName(
+            self._window,
+            "导入数据备份",
+            str(Path.home()),
+            "JSON 文件 (*.json)",
+        )
+        if not path:
+            return
+        reply = QMessageBox.question(
+            self._window,
+            "确认导入",
+            "导入将替换当前所有待办和归档数据，此操作不可撤销。\n是否继续？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            n_todos, n_archived = self._store.import_all(Path(path))
+            # 重新加载内存引用并刷新
+            self._todos = self._store.load_todos()
+            self._archived = self._store.load_archived()
+            self._search_query = ""
+            self._active_tag = ""
+            self._refresh_views()
+            self._show_notification(
+                f"导入完成：{n_todos} 条待办、{n_archived} 条归档")
+        except StoreError as e:
+            self._show_error(f"导入失败: {e}")
+
+    # ── 便签 ──────────────────────────────────────────────
+
+    def _on_notes_added(self, content: str, color: str) -> None:
+        """新建便签"""
+        note = Note(content=content, color=color)
+        try:
+            self._note_store.add_note(note)
+            self._notes = self._note_store.load_notes()
+            self._refresh_notes()
+        except StoreError as e:
+            self._show_error(f"新建便签失败: {e}")
+
+    def _on_note_updated(self, note_id: str, content: str, color: str) -> None:
+        """更新便签内容/颜色"""
+        note = next((n for n in self._notes if n.id == note_id), None)
+        if not note:
+            return
+        old_content, old_color = note.content, note.color
+        note.content = content
+        note.color = color
+        note.updated_at = datetime.now(CST).isoformat(timespec="seconds")
+        try:
+            self._note_store.update_note(note)
+            self._refresh_notes()
+        except StoreError as e:
+            note.content, note.color = old_content, old_color  # 回滚内存状态
+            self._refresh_notes()
+            self._show_error(f"保存便签失败: {e}")
+
+    def _on_note_deleted(self, note_id: str) -> None:
+        """删除便签"""
+        try:
+            if self._note_store.delete_note(note_id):
+                self._notes = self._note_store.load_notes()
+                self._refresh_notes()
+        except StoreError as e:
+            self._show_error(f"删除便签失败: {e}")
+
+    # ── 截止日期提醒 ──────────────────────────────────────
+
+    def _check_due_reminders(self) -> None:
+        """检查到期/过期待办并发送托盘提醒（每天每项只提醒一次）"""
+        if not self._tray_icon or not self._tray_icon.supportsMessages():
+            return
+        today = datetime.now(CST).date()
+        today_key = today.isoformat()
+        settings = QSettings("Personal", "待办事项和便签")
+        reminded = set((settings.value(f"reminders/{today_key}", "") or "").split(","))
+
+        overdue: list[str] = []
+        due_today: list[str] = []
+        touched_ids: list[str] = []
+        for t in self._todos:
+            if not t.is_active or not t.due_date:
+                continue
+            touched_ids.append(t.id)
+            if t.id in reminded:
+                continue
+            try:
+                due = datetime.strptime(t.due_date, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if due < today:
+                overdue.append(t.title)
+            elif due == today:
+                due_today.append(t.title)
+
+        if overdue or due_today:
+            parts = []
+            if overdue:
+                parts.append(f"已过期：{'、'.join(overdue[:3])}")
+            if due_today:
+                parts.append(f"今日到期：{'、'.join(due_today[:3])}")
+            self._show_notification("；".join(parts))
+
+        # 标记本次已检查的 id，避免重复提醒
+        if touched_ids:
+            settings.setValue(f"reminders/{today_key}", ",".join(touched_ids))
 
     # ── 系统托盘 ──────────────────────────────────────────
 
@@ -459,7 +725,6 @@ class AppController(QObject):
             highlight = QColor(255, 255, 255, 40)
             painter.setBrush(highlight)
             painter.drawRoundedRect(m, m, inner, inner // 3, inner // 4, inner // 4)
-            # 把底部抹平（只保留顶部圆角）
             painter.drawRect(m, m + inner // 6, inner, inner // 6)
 
             if s >= 24:
@@ -528,14 +793,14 @@ class AppController(QObject):
 
     def _on_close_requested(self) -> None:
         """关闭按钮行为：最小化到托盘"""
-        # 展开时先折叠
         if self._window.mode == "expanded":
             self._window.collapse()
         self._window.hide()
         self._show_notification("已最小化到系统托盘")
 
     def _on_quit(self) -> None:
-        """退出应用"""
+        """退出应用（先强制落盘）"""
+        self._flush_store()
         self._tray_icon.hide()
         QApplication.quit()
 
@@ -543,11 +808,11 @@ class AppController(QObject):
 
     def _restore_window_state(self) -> None:
         """恢复窗口置顶状态、透明度并同步按钮"""
-        self._pinned = True  # 默认置顶
         settings = QSettings("Personal", "待办事项和便签")
         self._pinned = settings.value("window/pinned", True, type=bool)
         self._sync_pin_state()
-        opacity = settings.value("window/opacity", AppConfig.WINDOW_OPACITY_DEFAULT, type=float)
+        opacity = settings.value(
+            "window/opacity", AppConfig.WINDOW_OPACITY_DEFAULT, type=float)
         self._window.set_opacity(opacity)
         self._expanded_view.set_opacity_value(opacity)
 
@@ -556,7 +821,6 @@ class AppController(QObject):
         self._pinned = not self._pinned
         self._window.set_always_on_top(self._pinned)
         self._sync_pin_state()
-        # 持久化
         settings = QSettings("Personal", "待办事项和便签")
         settings.setValue("window/pinned", self._pinned)
 
@@ -565,26 +829,50 @@ class AppController(QObject):
         self._collapsed_view.set_pinned(self._pinned)
         self._expanded_view.set_pinned(self._pinned)
 
-    # ── 主题切换 ────────────────────────────────────────
+    # ── 主题（浅色 / 深色 / 跟随系统） ────────────────────
 
-    def _on_toggle_theme(self, dark: bool) -> None:
-        """切换浅色/深色模式（视图通过 AppTheme 观察者自动更新）"""
-        # 主题切换前先更新全局 QSS + palette（先于视图通知）
+    @classmethod
+    def _system_theme_is_dark(cls) -> bool:
+        """读取 Windows 系统主题（深色返回 True）"""
+        if not AppConfig.IS_WINDOWS:
+            return False
+        try:
+            reg = QSettings(cls.THEME_REG_KEY, QSettings.NativeFormat)
+            light = reg.value(cls.THEME_REG_VALUE, 1, type=int)
+            return light == 0
+        except Exception:
+            return False
+
+    def _apply_theme_mode(self) -> None:
+        """按当前主题模式应用主题并同步按钮"""
+        dark = (self._system_theme_is_dark()
+                if self._theme_mode == "auto"
+                else self._theme_mode == "dark")
         app = QApplication.instance()
         app.setStyleSheet(AppTheme.global_qss())
         AppTheme.apply_palette(app)
         CustomTooltip.apply_theme_style()
-
-        # 触发主题切换（自动通知所有已注册的视图）
         AppTheme.switch_theme(dark)
-
-        # 重新应用全局 QSS（视图更新后覆盖一次以确保一致性）
         app.setStyleSheet(AppTheme.global_qss())
         self._window.setStyleSheet(AppTheme.global_qss())
+        self._expanded_view.set_theme_mode(self._theme_mode)
 
-        # ── 持久化偏好 ────────────────────────────────────
+    def _on_theme_mode_clicked(self) -> None:
+        """主题模式三态轮换：浅色 → 深色 → 自动"""
+        order = {"light": "dark", "dark": "auto", "auto": "light"}
+        self._theme_mode = order.get(self._theme_mode, "light")
+        self._apply_theme_mode()
         settings = QSettings("Personal", "待办事项和便签")
-        settings.setValue("theme/dark", dark)
+        settings.setValue("theme/mode", self._theme_mode)
+        settings.remove("theme/dark")  # 清理旧版本键
+
+    def _poll_system_theme(self) -> None:
+        """自动模式下轮询系统主题变化并即时切换"""
+        if self._theme_mode != "auto":
+            return
+        dark = self._system_theme_is_dark()
+        if dark != AppTheme.is_dark():
+            self._apply_theme_mode()
 
     # ── 开机自启 ──────────────────────────────────────
 
@@ -638,26 +926,44 @@ class AppController(QObject):
             logger.error("设置开机自启失败: %s", e)
             self._show_error(f"设置开机自启失败: {e}")
 
-    # ── 窗口透明度 ──────────────────────────────────────
+    # ── 窗口透明度 / 字号 ─────────────────────────────────
 
     def _on_opacity_changed(self, value: float) -> None:
-        """透明度值变化时更新窗口并持久化"""
+        """透明度实时变化：仅更新窗口（不写注册表）"""
+        self._window.set_opacity(value)
+
+    def _on_opacity_committed(self, value: float) -> None:
+        """透明度松手后持久化"""
         self._window.set_opacity(value)
         settings = QSettings("Personal", "待办事项和便签")
         settings.setValue("window/opacity", value)
 
+    def _on_font_scale_changed(self, scale: float) -> None:
+        """字号缩放应用并持久化"""
+        AppTheme.set_font_scale(scale)
+        app = QApplication.instance()
+        app.setStyleSheet(AppTheme.global_qss())
+        self._window.setStyleSheet(AppTheme.global_qss())
+        CustomTooltip.apply_theme_style()
+        settings = QSettings("Personal", "待办事项和便签")
+        settings.setValue("ui/font_scale", scale)
+
     # ── 键盘快捷键 ──────────────────────────────────────
 
     def _on_shortcut_new(self) -> None:
-        """Ctrl+N：新建待办"""
-        if self._window.mode == "expanded":
-            self._expanded_view.focus_add_input()
+        """Ctrl+N：新建（待办页新建待办，便签页新建便签）"""
+        if self._window.mode != "expanded":
+            self._window.expand()
+        if self._expanded_view.current_tab() == "notes":
+            self._expanded_view.focus_note_add()
         else:
-            self._on_quick_add_collapsed()
+            self._expanded_view.focus_add_input()
 
     def _on_shortcut_search(self) -> None:
-        """Ctrl+F：搜索"""
+        """Ctrl+F：搜索（切回待办页）"""
         if self._window.mode == "expanded":
+            if self._expanded_view.current_tab() == "notes":
+                self._expanded_view.switch_tab("todo")
             self._expanded_view.focus_search()
         else:
             self._window.expand()

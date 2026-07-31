@@ -47,9 +47,13 @@ python main.py
 打包 EXE 时，文件名须附加 `config.py` 中 `AppConfig.APP_VERSION` 定义的版本号，格式为 `待办事项和便签v{版本号}.exe`。
 
 ```bash
-# 示例：当前版本 0.1.1，产物为 待办事项和便签v0.1.1.exe
+# 示例：当前版本 0.4.0，产物为 待办事项和便签v0.4.0.exe
 pyinstaller --onefile --windowed \
-    --name "待办事项和便签v0.1.1" \
+    --name "待办事项和便签v0.4.0" \
+    --icon "app/resources/icon.ico" \
+    --add-data "app/resources;app/resources" \
     --clean --noconfirm \
     main.py
 ```
+
+应用图标源文件为 `app/resources/icon.ico`，如需修改请运行 `python tools/make_icon.py` 重新生成。

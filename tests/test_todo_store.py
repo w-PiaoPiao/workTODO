@@ -155,3 +155,90 @@ class TestTodoStore:
 
         count = store.auto_archive_old(days=30)
         assert count >= 0  # 至少不会报错
+
+    # ── 内存缓存与落盘 ──────────────────────────────────
+
+    def test_add_marks_dirty_no_write(self, store, tmp_path):
+        """写操作只标记脏，不立即写盘"""
+        store.add_item(TodoItem(title="缓存测试"))
+        todos_file = tmp_path / "todos.json"
+        assert not todos_file.exists()
+
+    def test_flush_persists(self, store, tmp_path):
+        """flush 后新实例可读回数据"""
+        store.add_item(TodoItem(title="落盘测试"))
+        store.flush()
+
+        new_store = TodoStore()
+        todos = new_store.load_todos()
+        assert len(todos) == 1
+        assert todos[0].title == "落盘测试"
+
+    def test_flush_only_dirty(self, store, tmp_path):
+        """无修改时 flush 不写盘"""
+        store.flush()
+        assert not (tmp_path / "todos.json").exists()
+
+    def test_save_todos_immediate(self, store, tmp_path):
+        """save_todos 立即写盘"""
+        store.save_todos([TodoItem(title="立即写")])
+        assert (tmp_path / "todos.json").exists()
+
+    # ── 统计 ────────────────────────────────────────────
+
+    def test_get_stats_completed(self, store):
+        from datetime import datetime, timezone, timedelta
+        cst = timezone(timedelta(hours=8), "CST")
+        item = TodoItem(title="已完成")
+        item.completed_at = datetime.now(cst).isoformat(timespec="seconds")
+        store.add_item(item)
+        store.archive_item(item)
+        stats = store.get_stats()
+        assert stats["active_count"] == 0
+        assert stats["archived_count"] == 1
+        assert stats["total_completed"] == 1
+        assert stats["today_completed"] == 1
+        assert stats["week_completed"] == 1
+
+    # ── 导出 / 导入 ─────────────────────────────────────
+
+    def test_export_and_import(self, store, tmp_path):
+        item = TodoItem(title="备份待办", tags=["工作"])
+        store.add_item(item)
+        store.archive_item(item)
+
+        backup = tmp_path / "backup.json"
+        stats = store.export_all(backup)
+        assert stats["todos"] == 0
+        assert stats["archived"] == 1
+        assert backup.exists()
+
+        # 新 store 导入
+        new_store = TodoStore()
+        n_todos, n_archived = new_store.import_all(backup)
+        assert n_todos == 0
+        assert n_archived == 1
+        assert len(new_store.load_archived()) == 1
+        assert new_store.load_archived()[0].tags == ["工作"]
+
+    def test_export_round_trip_active(self, store, tmp_path):
+        store.add_item(TodoItem(title="活跃条目"))
+        backup = tmp_path / "backup2.json"
+        store.export_all(backup)
+
+        new_store = TodoStore()
+        n_todos, _ = new_store.import_all(backup)
+        assert n_todos == 1
+        assert new_store.load_todos()[0].title == "活跃条目"
+
+    def test_import_invalid_file(self, store, tmp_path):
+        bad = tmp_path / "bad.json"
+        bad.write_text("这不是 JSON", encoding="utf-8")
+        with pytest.raises(StoreError):
+            store.import_all(bad)
+
+    def test_import_wrong_format(self, store, tmp_path):
+        bad = tmp_path / "bad2.json"
+        bad.write_text(json.dumps({"foo": "bar"}), encoding="utf-8")
+        with pytest.raises(StoreError):
+            store.import_all(bad)
