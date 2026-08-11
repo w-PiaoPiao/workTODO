@@ -170,3 +170,34 @@ class TestTodoItem:
     def test_due_display_overdue(self):
         item = TodoItem(title="过期", due_date="2000-01-01")
         assert "已过期" in item.due_display
+
+    # ── from_dict 脏数据校验 ─────────────────────────────
+
+    def test_from_dict_invalid_status_defaults_to_active(self):
+        for bad in ("ARCHIVED", "done", "123", 42):
+            item = TodoItem.from_dict({"title": "脏状态", "status": bad})
+            assert item.status == "active"
+
+    def test_from_dict_invalid_due_date_becomes_none(self):
+        for bad in ("not-a-date", "2026-13-99", "2026/01/01", 123):
+            item = TodoItem.from_dict({"title": "脏日期", "due_date": bad})
+            assert item.due_date is None
+
+    def test_from_dict_valid_due_date_kept(self):
+        item = TodoItem.from_dict({"title": "好日期", "due_date": "2026-12-31"})
+        assert item.due_date == "2026-12-31"
+
+    def test_from_dict_invalid_position_clamped(self):
+        for bad in (-5, "abc", None):
+            item = TodoItem.from_dict({"title": "脏位置", "position": bad})
+            assert item.position == 0
+        item = TodoItem.from_dict({"title": "位置", "position": "7"})
+        assert item.position == 7
+
+    def test_from_dict_title_stripped(self):
+        item = TodoItem.from_dict({"title": "  两边有空格  "})
+        assert item.title == "两边有空格"
+
+    def test_from_dict_non_dict_progress_skipped(self):
+        item = TodoItem.from_dict({"title": "脏进度", "progress": [123, "x", None]})
+        assert item.progress == []

@@ -1,5 +1,6 @@
 """测试便签模型与存储"""
 
+import json
 import pytest
 
 from app.models.note import Note, NoteStore
@@ -83,3 +84,18 @@ class TestNoteStore:
         notes_file.write_text("坏数据", encoding="utf-8")
         assert note_store.load_notes() == []
         assert (tmp_path / "notes.json.bak").exists()
+
+    def test_from_dict_unknown_color_fallback(self):
+        note = Note.from_dict({"content": "未知颜色", "color": "red"})
+        assert note.color == "yellow"
+
+    def test_load_unknown_color_safe(self, note_store, tmp_path):
+        notes_file = tmp_path / "notes.json"
+        notes_file.write_text(json.dumps([
+            {"id": "n1", "content": "正常", "color": "blue"},
+            {"id": "n2", "content": "未知色", "color": "red"},
+        ], ensure_ascii=False), encoding="utf-8")
+        notes = note_store.load_notes()
+        assert len(notes) == 2
+        assert notes[0].color == "blue"
+        assert notes[1].color == "yellow"

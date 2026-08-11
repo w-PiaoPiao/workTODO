@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
+from functools import lru_cache
 from typing import Optional
 
 
@@ -22,10 +23,37 @@ def _now_iso() -> str:
     return datetime.now(CST).isoformat(timespec="seconds")
 
 
+@lru_cache(maxsize=256)
+def _parse_due_date(s: str) -> date:
+    """解析 "YYYY-MM-DD" 截止日期（结果缓存，避免反复 strptime）"""
+    return datetime.strptime(s, "%Y-%m-%d").date()
+
+
+_today_cache: Optional[date] = None
+_today_cache_key: Optional[str] = None
+
+
+def _today() -> date:
+    """今天的日期（按天缓存，避免反复调用 datetime.now）"""
+    global _today_cache, _today_cache_key
+    today = datetime.now(CST).date()
+    key = today.isoformat()
+    if _today_cache_key != key:
+        _today_cache = today
+        _today_cache_key = key
+    return _today_cache
+
+
+@lru_cache(maxsize=1024)
+def _parse_iso(iso_str: str) -> datetime:
+    """解析 ISO-8601 时间字符串（结果缓存，避免反复 fromisoformat）"""
+    return datetime.fromisoformat(iso_str)
+
+
 def _format_relative(iso_str: str) -> str:
     """将 ISO 时间转为友好中文描述"""
     try:
-        dt = datetime.fromisoformat(iso_str)
+        dt = _parse_iso(iso_str)
         now = datetime.now(CST)
         delta = now - dt
 
@@ -53,6 +81,34 @@ class StoreError(Exception):
 
 
 # ── 数据类 ──────────────────────────────────────────────────
+
+VALID_STATUSES = {"active", "completed", "archived"}
+
+
+def _sanitize_status(raw) -> str:
+    """状态白名单校验，非法值归为 active（避免条目隐身丢失）"""
+    return raw if raw in VALID_STATUSES else "active"
+
+
+def _sanitize_due_date(raw) -> Optional[str]:
+    """截止日期格式校验，非法值置 None（避免界面显示怪串）"""
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        return None
+    try:
+        _parse_due_date(raw)
+    except ValueError:
+        return None
+    return raw
+
+
+def _sanitize_position(raw) -> int:
+    """位置非负整数化，非法值取 0（避免排序错乱）"""
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 0
 
 
 @dataclass
@@ -113,10 +169,10 @@ class TodoItem:
         if not self.due_date:
             return False
         try:
-            due = datetime.strptime(self.due_date, "%Y-%m-%d").date()
+            due = _parse_due_date(self.due_date)
         except ValueError:
             return False
-        return due < datetime.now(CST).date()
+        return due < _today()
 
     @property
     def due_display(self) -> str:
@@ -124,12 +180,12 @@ class TodoItem:
         if not self.due_date:
             return ""
         try:
-            due = datetime.strptime(self.due_date, "%Y-%m-%d").date()
+            due = _parse_due_date(self.due_date)
         except ValueError:
             return self.due_date
         if self.is_overdue:
             return f"已过期 {self.due_date}"
-        today = datetime.now(CST).date()
+        today = _today()
         if due == today:
             return f"今天到期"
         if (due - today).days == 1:
@@ -173,18 +229,22 @@ class TodoItem:
 
     @classmethod
     def from_dict(cls, data: dict) -> "TodoItem":
+        title = data.get("title", "")
+        if isinstance(title, str):
+            title = title.strip()
         return cls(
             id=data.get("id", uuid.uuid4().hex),
-            title=data.get("title", ""),
-            status=data.get("status", "active"),
+            title=title,
+            status=_sanitize_status(data.get("status", "active")),
             created_at=data.get("created_at", _now_iso()),
             completed_at=data.get("completed_at"),
             progress=[
                 ProgressEntry.from_dict(p)
                 for p in data.get("progress", [])
+                if isinstance(p, dict)
             ],
-            sticky=data.get("sticky", False),
-            position=data.get("position", 0),
-            due_date=data.get("due_date"),
+            sticky=bool(data.get("sticky", False)),
+            position=_sanitize_position(data.get("position", 0)),
+            due_date=_sanitize_due_date(data.get("due_date")),
             tags=[t for t in data.get("tags", []) if isinstance(t, str)],
         )

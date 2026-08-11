@@ -242,3 +242,63 @@ class TestTodoStore:
         bad.write_text(json.dumps({"foo": "bar"}), encoding="utf-8")
         with pytest.raises(StoreError):
             store.import_all(bad)
+
+    # ── 脏数据加载 / 导入校验 ────────────────────────────
+
+    def test_load_skips_empty_title(self, store, tmp_path):
+        raw = json.dumps([
+            {"id": "a", "title": "正常", "position": 1},
+            {"id": "b", "title": "   ", "position": 0},
+            {"id": "c", "title": "", "position": 2},
+        ], ensure_ascii=False)
+        (tmp_path / "todos.json").write_text(raw, encoding="utf-8")
+        todos = store.load_todos()
+        assert [t.id for t in todos] == ["a"]
+
+    def test_load_normalizes_positions(self, store, tmp_path):
+        raw = json.dumps([
+            {"id": "a", "title": "A", "position": 5},
+            {"id": "b", "title": "B", "position": 5},   # 与 a 重复
+            {"id": "c", "title": "C", "position": -1},  # 负数 → 0
+            {"id": "d", "title": "D"},                  # 缺省 → 0
+        ], ensure_ascii=False)
+        (tmp_path / "todos.json").write_text(raw, encoding="utf-8")
+        todos = store.load_todos()
+        assert [t.position for t in todos] == [0, 1, 2, 3]
+        # 稳定排序：同 position 保持原相对顺序（c 在 d 前）
+        assert [t.id for t in todos] == ["c", "d", "a", "b"]
+
+    def test_load_invalid_status_fixed(self, store, tmp_path):
+        raw = json.dumps([
+            {"id": "a", "title": "坏状态", "status": "DONE"},
+        ], ensure_ascii=False)
+        (tmp_path / "todos.json").write_text(raw, encoding="utf-8")
+        todos = store.load_todos()
+        assert todos[0].status == "active"
+
+    def test_load_non_dict_entry_skipped(self, store, tmp_path):
+        raw = json.dumps([42, "字符串", None, {"id": "ok", "title": "好的"}],
+                         ensure_ascii=False)
+        (tmp_path / "todos.json").write_text(raw, encoding="utf-8")
+        todos = store.load_todos()
+        assert [t.id for t in todos] == ["ok"]
+
+    def test_import_with_dirty_data(self, store, tmp_path):
+        backup = tmp_path / "dirty.json"
+        backup.write_text(json.dumps({
+            "todos": [
+                {"id": "a", "title": "好", "status": "active", "position": 3},
+                {"id": "b", "title": "", "status": "active"},
+                {"id": "c", "title": "坏日期", "status": "weird",
+                 "due_date": "2026/1/1"},
+            ],
+            "archived": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        n, _ = store.import_all(backup)
+        assert n == 2
+        todos = store.load_todos()
+        # 空标题跳过；position 归一化后 c（原 0）在前
+        assert [t.id for t in todos] == ["c", "a"]
+        assert todos[0].status == "active"     # weird → active
+        assert todos[0].due_date is None       # 非法日期 → None
+        assert [t.position for t in todos] == [0, 1]

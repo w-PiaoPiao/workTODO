@@ -159,10 +159,9 @@ class TestControllerNotes:
 
 class TestControllerReminders:
     def test_due_reminder_marks_reminded(self, controller, monkeypatch):
-        from PySide6.QtWidgets import QSystemTrayIcon
         # offscreen 下托盘不支持消息，monkeypatch 使其可用
         monkeypatch.setattr(
-            controller._tray_icon, "supportsMessages", lambda: True)
+            controller._tray, "supports_messages", lambda: True)
 
         yesterday = (datetime.now(CST) - timedelta(days=1)).strftime("%Y-%m-%d")
         controller._on_add_item("已过期的任务")
@@ -174,7 +173,7 @@ class TestControllerReminders:
 
     def test_due_today_reminder(self, controller, monkeypatch):
         monkeypatch.setattr(
-            controller._tray_icon, "supportsMessages", lambda: True)
+            controller._tray, "supports_messages", lambda: True)
         today = datetime.now(CST).strftime("%Y-%m-%d")
         controller._on_add_item("今天到期")
         controller._todos[0].due_date = today
@@ -189,17 +188,17 @@ class TestThemeAndExtras:
 
     def test_font_scale_changes(self, controller, app):
         scale = 1.2
-        controller._on_font_scale_changed(scale)
+        controller._theme.set_font_scale(scale)
         assert AppTheme.font_scale() == pytest.approx(scale)
 
     def test_theme_mode_cycles(self, controller):
-        controller._theme_mode = "light"
-        controller._on_theme_mode_clicked()
-        assert controller._theme_mode == "dark"
-        controller._on_theme_mode_clicked()
-        assert controller._theme_mode == "auto"
-        controller._on_theme_mode_clicked()
-        assert controller._theme_mode == "light"
+        controller._theme.mode = "light"
+        controller._theme.cycle()
+        assert controller._theme.mode == "dark"
+        controller._theme.cycle()
+        assert controller._theme.mode == "auto"
+        controller._theme.cycle()
+        assert controller._theme.mode == "light"
 
     def test_stats_requested(self, controller):
         controller._on_add_item("统计项")

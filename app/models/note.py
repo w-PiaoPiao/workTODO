@@ -12,10 +12,10 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from app.config import AppConfig
+from app.models.json_io import atomic_write_json, backup_corrupted
 from app.models.todo_item import CST, StoreError
 
 logger = logging.getLogger(__name__)
@@ -46,12 +46,15 @@ class Note:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Note":
+        color = data.get("color", "yellow")
+        if color not in AppConfig.NOTE_COLORS:
+            color = "yellow"
         return cls(
             id=data.get("id", uuid.uuid4().hex),
             content=data.get("content", ""),
             created_at=data.get("created_at", _now_iso()),
             updated_at=data.get("updated_at", _now_iso()),
-            color=data.get("color", "yellow"),
+            color=color,
         )
 
     @property
@@ -67,7 +70,7 @@ class NoteStore:
     """便签数据存储（JSON 原子读写）"""
 
     def __init__(self):
-        self._notes_path = AppConfig.DATA_DIR / AppConfig.NOTES_FILE
+        self._notes_path = AppConfig.notes_path()
         self._notes: Optional[list[Note]] = None  # 惰性缓存
 
     def load_notes(self) -> list[Note]:
@@ -119,12 +122,12 @@ class NoteStore:
             data = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.warning("JSON 解析失败 (%s)，备份文件: %s", e, path)
-            self._backup_corrupted(path)
+            backup_corrupted(path)
             return []
 
         if not isinstance(data, list):
             logger.warning("数据格式错误，期望列表，实际 %s", type(data).__name__)
-            self._backup_corrupted(path)
+            backup_corrupted(path)
             return []
 
         notes = []
@@ -138,27 +141,4 @@ class NoteStore:
 
     def _save_items(self, notes: list[Note]) -> None:
         """原子写入 JSON 文件"""
-        path = self._notes_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        tmp_path = path.with_suffix(".tmp")
-        try:
-            data = [n.to_dict() for n in notes]
-            content = json.dumps(data, ensure_ascii=False, indent=2)
-            tmp_path.write_text(content, encoding="utf-8")
-            tmp_path.replace(path)
-        except (IOError, OSError, PermissionError) as e:
-            if tmp_path.exists():
-                tmp_path.unlink()
-            raise StoreError(f"保存失败 ({path.name}): {e}")
-
-    @staticmethod
-    def _backup_corrupted(path: Path) -> None:
-        """备份损坏的文件"""
-        import shutil
-        bak_path = path.with_suffix(".json.bak")
-        try:
-            shutil.copy2(path, bak_path)
-            logger.info("已备份损坏文件到 %s", bak_path)
-        except (IOError, OSError) as e:
-            logger.error("备份损坏文件失败: %s", e)
+        atomic_write_json(self._notes_path, [n.to_dict() for n in notes])

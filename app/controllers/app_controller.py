@@ -1,24 +1,24 @@
 """
 应用控制器
 
-连接数据模型与 UI 视图的核心调度器。
-处理所有用户操作的业务逻辑、信号连接、异常处理。
+连接数据模型、系统服务与 UI 视图的核心协调器。
+处理待办/便签的业务逻辑、信号连接、异常处理。
+系统级功能（托盘/主题/自启/提醒）已拆至 app/services/。
 """
 
 from __future__ import annotations
 
 import logging
 import re
-import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QTimer, QSettings
+from PySide6.QtCore import QObject, QTimer, QSettings
 from PySide6.QtWidgets import (
-    QApplication, QSystemTrayIcon, QMenu, QMessageBox, QInputDialog,
+    QApplication, QMessageBox, QInputDialog,
     QFileDialog,
 )
-from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QPainterPath, QPen, QColor, QFont, QShortcut, QKeySequence, QPalette, QCursor
+from PySide6.QtGui import QShortcut, QKeySequence, QCursor
 
 from app.config import AppConfig
 from app.models.todo_item import TodoItem, ProgressEntry, StoreError, CST
@@ -29,7 +29,10 @@ from app.views.main_window import MainWindow
 from app.views.collapsed_view import CollapsedView
 from app.views.expanded_view import ExpandedView
 from app.views.archive_dialog import ArchiveDialog
-from app.views.custom_tooltip import CustomTooltip
+from app.services.theme_service import ThemeService
+from app.services.tray_service import TrayService
+from app.services.reminder_service import ReminderService
+from app.services.autostart_service import AutostartService
 
 logger = logging.getLogger(__name__)
 
@@ -37,32 +40,11 @@ logger = logging.getLogger(__name__)
 class AppController(QObject):
     """应用控制器"""
 
-    # 主题模式轮换顺序
-    THEME_CYCLE = ["light", "dark", "auto"]
-    # 系统主题注册表
-    THEME_REG_KEY = (
-        r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
-    )
-    THEME_REG_VALUE = "AppsUseLightTheme"
-
     def __init__(self):
         super().__init__()
 
-        # ── 从持久化存储加载主题偏好与字号 ──────────────
-        settings = QSettings("Personal", "待办事项和便签")
-        mode = settings.value("theme/mode", "")
-        if not mode:
-            # 兼容旧版本（仅存 theme/dark 布尔值）
-            old_dark = settings.value("theme/dark", False, type=bool)
-            mode = "dark" if old_dark else "auto"
-        self._theme_mode = mode
-        dark = self._system_theme_is_dark() if mode == "auto" else mode == "dark"
-        AppTheme.switch_theme(dark)
-
-        font_scale = settings.value(
-            "ui/font_scale", AppConfig.FONT_SCALE_DEFAULT, type=float)
-        if font_scale != AppConfig.FONT_SCALE_DEFAULT:
-            AppTheme.set_font_scale(font_scale)
+        # ── 系统服务（主题服务先创建，在视图构建前设定主题色） ──
+        self._theme = ThemeService()
 
         app = QApplication.instance()
         app.setStyleSheet(AppTheme.global_qss())
@@ -80,13 +62,21 @@ class AppController(QObject):
         # 注入视图到主窗口
         self._window.set_views(self._collapsed_view, self._expanded_view)
 
-        # ── 系统托盘 ──────────────────────────────────────
-        self._tray_icon = None
-        self._setup_tray()
+        # ── 系统服务（托盘 / 自启 / 提醒） ─────────────────
+        self._tray = TrayService(self._window)
+        self._autostart = AutostartService()
+        self._reminder = ReminderService(self)
+        self._reminder.configure(lambda: self._todos, self._show_notification)
+
+        self._tray.signal_show_requested.connect(self._on_tray_show)
+        self._tray.signal_quit_requested.connect(self._on_quit)
+        self._theme.signal_theme_applied.connect(self._on_theme_applied)
 
         # ── 搜索 / 标签状态 ───────────────────────────────
         self._search_query = ""
         self._active_tag = ""
+        self._search_index: dict[str, str] | None = None   # item_id → 小写搜索文本
+        self._search_index_list_id: int | None = None      # 索引对应的 _todos 列表身份
 
         # ── 数据落盘防抖 ──────────────────────────────────
         self._save_timer = QTimer()
@@ -101,23 +91,10 @@ class AppController(QObject):
         # ── 连接信号 ──────────────────────────────────────
         self._connect_signals()
 
-        # ── 定时任务：系统主题跟随 / 截止日期提醒 ────────
-        self._theme_poll_timer = QTimer()
-        self._theme_poll_timer.setInterval(30_000)  # 30 秒轮询系统主题
-        self._theme_poll_timer.timeout.connect(self._poll_system_theme)
-        self._theme_poll_timer.start()
-
-        self._due_check_timer = QTimer()
-        self._due_check_timer.setInterval(AppConfig.DUE_REMIND_CHECK_MS)
-        self._due_check_timer.timeout.connect(self._check_due_reminders)
-        self._due_check_timer.start()
-
-        # ── 开机自启状态（在信号连接之后，显示窗口之前） ──
-        self._init_autostart()
-
         # ── 同步视图初始状态 ──────────────────────────────
-        self._expanded_view.set_theme_mode(self._theme_mode)
+        self._theme.apply()
         self._expanded_view.set_font_scale_value(AppTheme.font_scale())
+        self._expanded_view.set_autostart(self._autostart.is_enabled())
 
         # ── 显示窗口 ──────────────────────────────────
         self._window.show()
@@ -160,14 +137,27 @@ class AppController(QObject):
         result = [i for i in self._todos if i.is_active]
         q = self._search_query.lower()
         if q:
-            result = [
-                i for i in result
-                if q in i.title.lower()
-                or any(q in p.text.lower() for p in i.progress)
-            ]
+            index = self._search_index_text()
+            result = [i for i in result if q in index.get(i.id, "")]
         if self._active_tag:
             result = [i for i in result if self._active_tag in i.tags]
         return result
+
+    def _search_index_text(self) -> dict[str, str]:
+        """构建/复用标题+进度的小写搜索索引（列表替换或内容修改时重建）"""
+        if self._search_index_list_id != id(self._todos):
+            self._search_index = None
+            self._search_index_list_id = id(self._todos)
+        if self._search_index is None:
+            self._search_index = {
+                t.id: (t.title + "\n" + "\n".join(p.text for p in t.progress)).lower()
+                for t in self._todos
+            }
+        return self._search_index
+
+    def _invalidate_search_index(self) -> None:
+        """内容被原地修改（标题/进度）时使搜索索引失效"""
+        self._search_index = None
 
     def _collect_tags(self) -> list[str]:
         """收集所有活跃待办的标签（保持出现顺序去重）"""
@@ -246,16 +236,14 @@ class AppController(QObject):
         self._expanded_view.signal_title_changed.connect(self._on_title_changed)
         self._expanded_view.signal_progress_edited.connect(self._on_edit_progress)
         self._expanded_view.signal_progress_deleted.connect(self._on_delete_progress)
-        self._expanded_view.signal_theme_mode_clicked.connect(
-            self._on_theme_mode_clicked
-        )
+        self._expanded_view.signal_theme_mode_clicked.connect(self._theme.cycle)
         self._expanded_view.signal_autostart_toggled.connect(self._on_toggle_autostart)
         self._expanded_view.signal_opacity_changed.connect(self._on_opacity_changed)
         self._expanded_view.signal_opacity_committed.connect(
             self._on_opacity_committed
         )
         self._expanded_view.signal_font_scale_changed.connect(
-            self._on_font_scale_changed
+            self._theme.set_font_scale
         )
         self._expanded_view.signal_due_date_set.connect(self._on_due_date_set)
         self._expanded_view.signal_tag_filter_clicked.connect(
@@ -362,6 +350,7 @@ class AppController(QObject):
         try:
             self._store.update_item(item)
             self._schedule_save()
+            self._invalidate_search_index()
             self._refresh_views()
         except StoreError as e:
             item.progress.pop()  # 回滚内存状态
@@ -387,6 +376,7 @@ class AppController(QObject):
         try:
             self._store.update_item(item)
             self._schedule_save()
+            self._invalidate_search_index()
             self._refresh_views()  # 刷新搜索过滤等视图状态
             self._show_notification("进度已更新")
         except StoreError as e:
@@ -409,6 +399,7 @@ class AppController(QObject):
         try:
             self._store.update_item(item)
             self._schedule_save()
+            self._invalidate_search_index()
             self._refresh_views()
             self._show_notification("进度已删除")
         except StoreError as e:
@@ -428,6 +419,7 @@ class AppController(QObject):
         try:
             self._store.update_item(item)
             self._schedule_save()
+            self._invalidate_search_index()
             # 无需刷新视图，卡片已就地更新
             self._show_notification("已更新标题")
         except StoreError as e:
@@ -635,155 +627,11 @@ class AppController(QObject):
 
     def _check_due_reminders(self) -> None:
         """检查到期/过期待办并发送托盘提醒（每天每项只提醒一次）"""
-        if not self._tray_icon or not self._tray_icon.supportsMessages():
+        if not self._tray.supports_messages():
             return
-        today = datetime.now(CST).date()
-        today_key = today.isoformat()
-        settings = QSettings("Personal", "待办事项和便签")
-        reminded = set((settings.value(f"reminders/{today_key}", "") or "").split(","))
+        self._reminder.check()
 
-        overdue: list[str] = []
-        due_today: list[str] = []
-        touched_ids: list[str] = []
-        for t in self._todos:
-            if not t.is_active or not t.due_date:
-                continue
-            touched_ids.append(t.id)
-            if t.id in reminded:
-                continue
-            try:
-                due = datetime.strptime(t.due_date, "%Y-%m-%d").date()
-            except ValueError:
-                continue
-            if due < today:
-                overdue.append(t.title)
-            elif due == today:
-                due_today.append(t.title)
-
-        if overdue or due_today:
-            parts = []
-            if overdue:
-                parts.append(f"已过期：{'、'.join(overdue[:3])}")
-            if due_today:
-                parts.append(f"今日到期：{'、'.join(due_today[:3])}")
-            self._show_notification("；".join(parts))
-
-        # 标记本次已检查的 id，避免重复提醒
-        if touched_ids:
-            settings.setValue(f"reminders/{today_key}", ",".join(touched_ids))
-
-    # ── 系统托盘 ──────────────────────────────────────────
-
-    def _setup_tray(self) -> None:
-        """初始化系统托盘"""
-        self._tray_icon = QSystemTrayIcon(self._window)
-
-        # 美观的多分辨率托盘图标（剪切板 ✓）
-        self._tray_icon.setIcon(self._create_tray_icon())
-        self._tray_icon.setToolTip("待办事项和便签")
-
-        # 右键菜单
-        menu = QMenu()
-        show_action = QAction("显示/隐藏", menu)
-        show_action.triggered.connect(self._on_tray_show)
-        menu.addAction(show_action)
-
-        menu.addSeparator()
-
-        quit_action = QAction("退出", menu)
-        quit_action.triggered.connect(self._on_quit)
-        menu.addAction(quit_action)
-
-        self._tray_icon.setContextMenu(menu)
-
-        # 双击托盘恢复
-        self._tray_icon.activated.connect(self._on_tray_activated)
-
-        self._tray_icon.show()
-
-    def _create_tray_icon(self) -> QIcon:
-        """创建美观的多分辨率托盘图标（剪切板 ✓）"""
-        icon = QIcon()
-
-        for size in (48, 32, 24, 16):
-            pixmap = QPixmap(size, size)
-            pixmap.fill(QColor(0, 0, 0, 0))
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform)
-
-            s = size  # shorthand
-            m = max(1, s // 16)  # outer margin
-            inner = s - 2 * m
-
-            # ── 背景：蓝色圆角方块 ──
-            painter.setBrush(QColor("#0078D4"))
-            painter.setPen(Qt.NoPen)
-            painter.drawRoundedRect(m, m, inner, inner, inner // 4, inner // 4)
-
-            # ── 顶部高光（2px 浅色渐变条） ──
-            highlight = QColor(255, 255, 255, 40)
-            painter.setBrush(highlight)
-            painter.drawRoundedRect(m, m, inner, inner // 3, inner // 4, inner // 4)
-            painter.drawRect(m, m + inner // 6, inner, inner // 6)
-
-            if s >= 24:
-                # ── 剪切板纸张 ──
-                pm = s // 4          # paper margin ≈ 8@32, 6@24
-                pw = s - 2 * pm - 1  # paper width
-                ph = pw + 2          # paper height (slightly taller)
-                px = pm
-                py = pm + 1
-                radius = max(1, s // 10)
-                painter.setBrush(QColor(255, 255, 255, 235))
-                painter.drawRoundedRect(px, py, pw, ph, radius, radius)
-
-                # ── 回形针 ──
-                cw = max(3, s // 8)     # clip width
-                ch = max(2, s // 6)     # clip height
-                cx = (s - cw) // 2
-                cy = py - 1
-                painter.setBrush(QColor("#0078D4"))
-                painter.drawRoundedRect(cx, cy, cw, ch, 1, 1)
-
-                # ── 勾号 ✓（蓝色） ──
-                pen = QPen(QColor("#0078D4"), max(1.5, s / 11))
-                pen.setCapStyle(Qt.RoundCap)
-                pen.setJoinStyle(Qt.RoundJoin)
-                painter.setPen(pen)
-
-                left_x = px + pw * 0.18
-                mid_x = px + pw * 0.48
-                mid_y = py + ph * 0.62
-                right_x = px + pw * 0.82
-                top_y = py + ph * 0.28
-
-                path = QPainterPath()
-                path.moveTo(left_x, mid_y)
-                path.lineTo(mid_x, py + ph * 0.76)
-                path.lineTo(right_x, top_y)
-                painter.strokePath(path, pen)
-            else:
-                # ── 小尺寸（16px）：简洁白色勾号 ──
-                pen = QPen(QColor(255, 255, 255, 240), 2.0)
-                pen.setCapStyle(Qt.RoundCap)
-                pen.setJoinStyle(Qt.RoundJoin)
-                painter.setPen(pen)
-
-                path = QPainterPath()
-                path.moveTo(s * 0.25, s * 0.52)
-                path.lineTo(s * 0.44, s * 0.70)
-                path.lineTo(s * 0.75, s * 0.35)
-                painter.strokePath(path, pen)
-
-            painter.end()
-            icon.addPixmap(pixmap)
-
-        return icon
-
-    def _on_tray_activated(self, reason) -> None:
-        if reason == QSystemTrayIcon.DoubleClick:
-            self._on_tray_show()
+    # ── 系统托盘回调 ──────────────────────────────────────
 
     def _on_tray_show(self) -> None:
         self._window.ensure_visible()
@@ -801,7 +649,7 @@ class AppController(QObject):
     def _on_quit(self) -> None:
         """退出应用（先强制落盘）"""
         self._flush_store()
-        self._tray_icon.hide()
+        self._tray.hide()
         QApplication.quit()
 
     # ── 窗口状态管理 ──────────────────────────────────────
@@ -831,95 +679,18 @@ class AppController(QObject):
 
     # ── 主题（浅色 / 深色 / 跟随系统） ────────────────────
 
-    @classmethod
-    def _system_theme_is_dark(cls) -> bool:
-        """读取 Windows 系统主题（深色返回 True）"""
-        if not AppConfig.IS_WINDOWS:
-            return False
-        try:
-            reg = QSettings(cls.THEME_REG_KEY, QSettings.NativeFormat)
-            light = reg.value(cls.THEME_REG_VALUE, 1, type=int)
-            return light == 0
-        except Exception:
-            return False
-
-    def _apply_theme_mode(self) -> None:
-        """按当前主题模式应用主题并同步按钮"""
-        dark = (self._system_theme_is_dark()
-                if self._theme_mode == "auto"
-                else self._theme_mode == "dark")
-        app = QApplication.instance()
-        app.setStyleSheet(AppTheme.global_qss())
-        AppTheme.apply_palette(app)
-        CustomTooltip.apply_theme_style()
-        AppTheme.switch_theme(dark)
-        app.setStyleSheet(AppTheme.global_qss())
-        self._window.setStyleSheet(AppTheme.global_qss())
-        self._expanded_view.set_theme_mode(self._theme_mode)
-
-    def _on_theme_mode_clicked(self) -> None:
-        """主题模式三态轮换：浅色 → 深色 → 自动"""
-        order = {"light": "dark", "dark": "auto", "auto": "light"}
-        self._theme_mode = order.get(self._theme_mode, "light")
-        self._apply_theme_mode()
-        settings = QSettings("Personal", "待办事项和便签")
-        settings.setValue("theme/mode", self._theme_mode)
-        settings.remove("theme/dark")  # 清理旧版本键
-
-    def _poll_system_theme(self) -> None:
-        """自动模式下轮询系统主题变化并即时切换"""
-        if self._theme_mode != "auto":
-            return
-        dark = self._system_theme_is_dark()
-        if dark != AppTheme.is_dark():
-            self._apply_theme_mode()
+    def _on_theme_applied(self, mode: str) -> None:
+        """主题应用后同步展开视图的主题按钮状态"""
+        self._expanded_view.set_theme_mode(mode)
 
     # ── 开机自启 ──────────────────────────────────────
-
-    REG_KEY = r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run"
-    REG_ENTRY = "待办事项和便签"
-
-    def _init_autostart(self) -> None:
-        """读取当前开机自启状态并同步到视图"""
-        enabled = False
-        if AppConfig.IS_WINDOWS:
-            try:
-                reg = QSettings(self.REG_KEY, QSettings.NativeFormat)
-                enabled = bool(reg.value(self.REG_ENTRY, ""))
-            except Exception:
-                pass
-        self._expanded_view.set_autostart(enabled)
 
     def _on_toggle_autostart(self, enabled: bool) -> None:
         """切换开机自启状态"""
         if not AppConfig.IS_WINDOWS:
             return
-
         try:
-            reg = QSettings(self.REG_KEY, QSettings.NativeFormat)
-            if enabled:
-                # 获取当前可执行文件路径
-                if getattr(sys, "frozen", False):
-                    # PyInstaller 打包模式：使用 VBS 脚本包装，避免开机弹 cmd 窗口
-                    exe_path = QApplication.instance().applicationFilePath()
-                    vbs_path = AppConfig.DATA_DIR / "startup.vbs"
-                    vbs_content = f'CreateObject("WScript.Shell").Run """{exe_path}""", 0, False'
-                    vbs_path.write_text(vbs_content, encoding="utf-8-sig")
-                    app_path = f'"{vbs_path}"'
-                else:
-                    # 源码开发模式：使用 pythonw main.py（避免开机弹 cmd 窗口）
-                    script = Path(__file__).resolve().parent.parent.parent / "main.py"
-                    pythonw = Path(sys.executable).with_name("pythonw.exe")
-                    app_path = f'"{pythonw}" "{script}"'
-                reg.setValue(self.REG_ENTRY, app_path)
-                logger.info("开机自启写入注册表: %s = %s", self.REG_ENTRY, app_path)
-            else:
-                reg.remove(self.REG_ENTRY)
-                vbs_path = AppConfig.DATA_DIR / "startup.vbs"
-                if vbs_path.exists():
-                    vbs_path.unlink()
-                logger.info("已从注册表移除开机自启条目: %s", self.REG_ENTRY)
-            reg.sync()
+            self._autostart.set_enabled(enabled)
             self._expanded_view.set_autostart(enabled)
             self._show_notification("已开启开机自启" if enabled else "已关闭开机自启")
         except Exception as e:
@@ -937,16 +708,6 @@ class AppController(QObject):
         self._window.set_opacity(value)
         settings = QSettings("Personal", "待办事项和便签")
         settings.setValue("window/opacity", value)
-
-    def _on_font_scale_changed(self, scale: float) -> None:
-        """字号缩放应用并持久化"""
-        AppTheme.set_font_scale(scale)
-        app = QApplication.instance()
-        app.setStyleSheet(AppTheme.global_qss())
-        self._window.setStyleSheet(AppTheme.global_qss())
-        CustomTooltip.apply_theme_style()
-        settings = QSettings("Personal", "待办事项和便签")
-        settings.setValue("ui/font_scale", scale)
 
     # ── 键盘快捷键 ──────────────────────────────────────
 
@@ -972,14 +733,8 @@ class AppController(QObject):
     # ── 通知 ──────────────────────────────────────────────
 
     def _show_notification(self, message: str) -> None:
-        """显示短暂的通知消息（托盘气泡）"""
-        if self._tray_icon and self._tray_icon.supportsMessages():
-            self._tray_icon.showMessage(
-                "待办事项和便签",
-                message,
-                QSystemTrayIcon.Information,
-                AppConfig.NOTIFICATION_DURATION_MS,
-            )
+        """显示短暂的通知消息（托盘气泡，不支持时静默）"""
+        self._tray.show_notification(message)
 
     def _show_error(self, message: str) -> None:
         """显示错误对话框"""

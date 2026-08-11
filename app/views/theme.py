@@ -38,6 +38,7 @@ class AppTheme:
         "body_bold": f"12pt '{FONT_FAMILY}'",
     }
     _font_scale = 1.0  # 字号缩放比例（0.85 ~ 1.3）
+    _qss_cache: str | None = None  # global_qss() 结果缓存（主题/字号变化时失效）
 
     # ── 主题观察者 ────────────────────────────────────────
     _listeners: list[Callable[[], None]] = []
@@ -62,13 +63,15 @@ class AppTheme:
     @classmethod
     def set_font_scale(cls, scale: float) -> None:
         """设置全局字号缩放比例并通知所有视图刷新"""
-        cls._font_scale = max(0.7, min(1.5, float(scale)))
+        cls._font_scale = max(
+            AppConfig.FONT_SCALE_MIN, min(AppConfig.FONT_SCALE_MAX, float(scale)))
         cls.FONT = {
             "title": f"{round(14 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
             "body": f"{round(12 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
             "small": f"{round(10 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
             "body_bold": f"{round(12 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
         }
+        cls._invalidate_qss()
         cls._notify_listeners()
 
     @classmethod
@@ -83,6 +86,7 @@ class AppTheme:
         """切换浅色/深色模式。dark=True → 深色"""
         cls._current_theme = "dark" if dark else "light"
         cls.C = AppConfig.DARK_COLORS if dark else AppConfig.COLORS
+        cls._invalidate_qss()
         cls._notify_listeners()
 
     @classmethod
@@ -102,8 +106,21 @@ class AppTheme:
     # ── 全局样式表 ────────────────────────────────────────
 
     @classmethod
+    def _invalidate_qss(cls) -> None:
+        """使缓存的全局样式表失效（主题/字号变化时调用）"""
+        cls._qss_cache = None
+
+    @classmethod
     def global_qss(cls) -> str:
-        """全局应用样式表"""
+        """全局应用样式表（结果缓存，主题/字号变化时自动失效）"""
+        if cls._qss_cache is not None:
+            return cls._qss_cache
+        cls._qss_cache = cls._build_global_qss()
+        return cls._qss_cache
+
+    @classmethod
+    def _build_global_qss(cls) -> str:
+        """拼接全局样式表（较慢，仅主题/字号变化时执行一次）"""
         C = cls.C
         return f"""
             /* 全局 */

@@ -12,14 +12,14 @@
 from __future__ import annotations
 
 import json
-import shutil
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
 from app.config import AppConfig
-from app.models.todo_item import TodoItem, StoreError, CST
+from app.models.json_io import atomic_write_json, backup_corrupted
+from app.models.todo_item import TodoItem, StoreError, CST, _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +225,6 @@ class TodoStore:
 
     def export_all(self, path: Path) -> dict:
         """导出全部数据（活跃 + 归档）到单个 JSON 文件，返回统计信息"""
-        from app.models.todo_item import _now_iso
         data = {
             "app": AppConfig.APP_NAME,
             "version": AppConfig.APP_VERSION,
@@ -233,18 +232,10 @@ class TodoStore:
             "todos": [t.to_dict() for t in self.load_todos()],
             "archived": [t.to_dict() for t in self.load_archived()],
         }
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_suffix(".tmp")
         try:
-            tmp_path.write_text(
-                json.dumps(data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            tmp_path.replace(path)
-        except (IOError, OSError, PermissionError) as e:
-            if tmp_path.exists():
-                tmp_path.unlink()
-            raise StoreError(f"导出失败: {e}")
+            atomic_write_json(path, data)
+        except StoreError as e:
+            raise StoreError(f"导出失败: {e}") from e
         return {
             "todos": len(data["todos"]),
             "archived": len(data["archived"]),
@@ -266,9 +257,9 @@ class TodoStore:
             for entry in entries:
                 try:
                     items.append(TodoItem.from_dict(entry))
-                except (KeyError, TypeError, ValueError) as e:
+                except (KeyError, TypeError, ValueError, AttributeError) as e:
                     logger.warning("导入时跳过无效条目: %s", e)
-            return items
+            return self._sanitize_items(items)
 
         todos = _parse_items(data.get("todos", []))
         archived = _parse_items(data.get("archived", []))
@@ -277,6 +268,24 @@ class TodoStore:
         self.save_archived(archived)
         logger.info("导入完成：%d 条待办，%d 条归档", len(todos), len(archived))
         return len(todos), len(archived)
+
+    @staticmethod
+    def _sanitize_items(items: list[TodoItem]) -> list[TodoItem]:
+        """剔除空标题条目并归一化 position
+
+        - 空标题卡片无意义，跳过并记日志
+        - 按 position 稳定排序后重写 0..n-1，消除重复 position 的排序错乱
+        """
+        valid = []
+        for item in items:
+            if not item.title:
+                logger.warning("跳过空标题条目: %s", item.id)
+                continue
+            valid.append(item)
+        valid.sort(key=lambda t: t.position)
+        for idx, item in enumerate(valid):
+            item.position = idx
+        return valid
 
     # ── 内部实现 ──────────────────────────────────────────
 
@@ -296,54 +305,23 @@ class TodoStore:
             data = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.warning("JSON 解析失败 (%s)，备份文件: %s", e, path)
-            self._backup_corrupted(path)
+            backup_corrupted(path)
             return []
 
         if not isinstance(data, list):
             logger.warning("数据格式错误，期望列表，实际 %s", type(data).__name__)
-            self._backup_corrupted(path)
+            backup_corrupted(path)
             return []
 
         items = []
         for entry in data:
             try:
                 items.append(TodoItem.from_dict(entry))
-            except (KeyError, TypeError, ValueError) as e:
+            except (KeyError, TypeError, ValueError, AttributeError) as e:
                 logger.warning("跳过无效条目: %s", e)
                 continue
-        return items
+        return self._sanitize_items(items)
 
     def _save_items(self, path: Path, items: list[TodoItem]) -> None:
-        """原子写入 JSON 文件
-
-        策略：写入 .tmp 临时文件 → 重命名为目标文件
-        如果写入中途失败，原始文件不受影响。
-        """
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        tmp_path = path.with_suffix(".tmp")
-        try:
-            data = [item.to_dict() for item in items]
-            content = json.dumps(
-                data,
-                ensure_ascii=False,
-                indent=2,
-            )
-            tmp_path.write_text(content, encoding="utf-8")
-            # Windows 上 replace 是原子操作（同分区）
-            tmp_path.replace(path)
-        except (IOError, OSError, PermissionError) as e:
-            # 清理临时文件
-            if tmp_path.exists():
-                tmp_path.unlink()
-            raise StoreError(f"保存失败 ({path.name}): {e}")
-
-    @staticmethod
-    def _backup_corrupted(path: Path) -> None:
-        """备份损坏的文件"""
-        bak_path = path.with_suffix(".json.bak")
-        try:
-            shutil.copy2(path, bak_path)
-            logger.info("已备份损坏文件到 %s", bak_path)
-        except (IOError, OSError) as e:
-            logger.error("备份损坏文件失败: %s", e)
+        """原子写入 JSON 文件（写入失败时原始文件不受影响）"""
+        atomic_write_json(path, [item.to_dict() for item in items])

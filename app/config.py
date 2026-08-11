@@ -47,6 +47,12 @@ class AppConfig:
         cls.DATA_DIR.mkdir(parents=True, exist_ok=True)
         return cls.DATA_DIR / cls.ARCHIVE_FILE
 
+    @classmethod
+    def notes_path(cls) -> Path:
+        """便签文件路径（确保目录存在）"""
+        cls.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        return cls.DATA_DIR / cls.NOTES_FILE
+
     # ── 窗口尺寸与位置 ────────────────────────────────────────
     COLLAPSED_WIDTH = 320
     COLLAPSED_HEIGHT = 48
