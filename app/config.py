@@ -152,7 +152,6 @@ class AppConfig:
     PET_WHITE_SEED_THRESHOLD = 245   # 白底种子点判定阈值（RGB ≥）
     PET_WHITE_FLOOD_THRESH = 25      # floodfill 容差（吃掉 JPG 压缩噪点）
     PET_PROCESSED_SIZE = 512         # 去白底处理前缩放尺寸
-    PET_PLACEHOLDERS = ["cat", "dog", "rabbit", "panda"]  # 内置默认形象 id
     PET_SUBDIR = "pets"         # 素材目录名（resources 与 data 下同名）
 
     # ── 平台检测 ──────────────────────────────────────────────

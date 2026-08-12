@@ -74,6 +74,11 @@ class AppController(QObject):
         pet_id = settings.value("window/pet", "")
         self._pet_view.load_pet(pet_id)
         self._expanded_view.set_pets(self._pets, self._pet_view.pet_id())
+
+        # ── 桌宠空闲动画开关（右键菜单，持久化） ─────────
+        pet_animation = settings.value(
+            "window/pet_animation", True, type=bool)
+        self._pet_view.set_animation_enabled(pet_animation)
         self._tray.signal_show_requested.connect(self._on_tray_show)
         self._tray.signal_quit_requested.connect(self._on_quit)
         self._theme.signal_theme_applied.connect(self._on_theme_applied)
@@ -270,6 +275,8 @@ class AppController(QObject):
         self._pet_view.signal_toggle_pin.connect(self._on_toggle_pin)
         self._expanded_view.signal_toggle_pin.connect(self._on_toggle_pin)
         self._pet_view.signal_quit_requested.connect(self._on_quit)
+        self._pet_view.signal_animation_toggled.connect(
+            self._on_pet_animation_toggled)
 
         # ── 键盘快捷键 ──────────────────────────────────
         self._setup_shortcuts()
@@ -695,6 +702,15 @@ class AppController(QObject):
         settings.setValue("window/pet", self._pet_view.pet_id())
         self._expanded_view.set_selected_pet(self._pet_view.pet_id())
         self._show_notification("已切换桌宠形象")
+
+    def _on_pet_animation_toggled(self, enabled: bool) -> None:
+        """桌宠空闲动画开关切换：持久化，恢复时若处于折叠态立即重启"""
+        settings = QSettings("Personal", "待办事项和便签")
+        settings.setValue("window/pet_animation", enabled)
+        if enabled:
+            self._window.start_collapsed_idle()
+        self._show_notification(
+            "已开启桌宠动画" if enabled else "已暂停桌宠动画")
 
     # ── 主题（浅色 / 深色 / 跟随系统） ────────────────────
 

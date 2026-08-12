@@ -1,6 +1,7 @@
 """桌宠视图测试（offscreen 无头模式）
 
-覆盖：素材发现（内置 + 用户目录优先级）、形象加载、计数角标。
+覆盖：素材发现（内置 + 用户目录优先级）、形象加载、白底去除、
+计数角标、拖拽/单击、动画启停与开关、展开锚点（屏幕边缘）。
 """
 
 import os
@@ -10,12 +11,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QPoint, Qt, QAbstractAnimation
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
 from app.config import AppConfig
 from app.views.pet_view import PetView, discover_pets
+
+BUILTIN_PET = "deepseek娘"
 
 
 @pytest.fixture(scope="module")
@@ -34,30 +37,37 @@ def user_pets_dir(tmp_path, monkeypatch):
     return d
 
 
-def _builtin_pet_ids() -> set[str]:
+def _all_pet_ids() -> set[str]:
     return {p["id"] for p in discover_pets()}
 
 
-def test_discover_includes_builtin_placeholders():
-    ids = _builtin_pet_ids()
-    assert {"cat", "dog", "rabbit", "panda"} <= ids
+# ── 素材发现 ────────────────────────────────────────────────
+
+
+def test_discover_includes_builtin_pet():
+    ids = _all_pet_ids()
+    assert BUILTIN_PET in ids
 
 
 def test_discover_includes_user_pets(user_pets_dir):
-    ids = _builtin_pet_ids()
+    ids = _all_pet_ids()
     assert "custom" in ids
 
 
-def test_user_dir_overrides_builtin_same_name(app, user_pets_dir, tmp_path):
-    """用户目录同名素材应覆盖内置（优先级更高）"""
-    builtin_cat = next(p for p in discover_pets() if p["id"] == "cat")
-    assert not Path(builtin_cat["path"]).is_relative_to(AppConfig.pets_dir())
+def test_builtin_pet_comes_from_resources():
+    """deepseek娘 应来自内置 resources 目录"""
+    pet = next(p for p in discover_pets() if p["id"] == BUILTIN_PET)
+    assert Path(pet["path"]).is_relative_to(
+        AppConfig.resource_path("app/resources/pets"))
+
+
+# ── 形象加载 ────────────────────────────────────────────────
 
 
 def test_load_pet_pixmap(app, tmp_path, monkeypatch):
     monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
     view = PetView()
-    view.load_pet("cat")
+    view.load_pet(BUILTIN_PET)
     pixmap = view._pet_canvas.current_pixmap()
     assert pixmap is not None and not pixmap.isNull()
 
@@ -66,8 +76,22 @@ def test_load_missing_pet_falls_back(app, tmp_path, monkeypatch):
     monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
     view = PetView()
     view.load_pet("no_such_pet")
-    # 回退到第一个可用素材（内置 cat）
-    assert view.pet_id() == "cat"
+    # 回退到第一个可用素材（内置 deepseek娘）
+    assert view.pet_id() == BUILTIN_PET
+
+
+def test_load_pet_no_pets_available(app, tmp_path, monkeypatch):
+    """素材全空时加载不崩溃，pet_id 为空"""
+    monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
+    monkeypatch.setattr(
+        AppConfig, "resource_path",
+        classmethod(lambda cls, name: tmp_path / "empty"))
+    view = PetView()
+    view.load_pet("whatever")
+    assert view.pet_id() == ""
+
+
+# ── 计数角标 / 菜单 ─────────────────────────────────────────
 
 
 def test_update_count_badge(app, tmp_path, monkeypatch):
@@ -94,6 +118,9 @@ def test_set_pinned_updates_menu_text(app, tmp_path, monkeypatch):
     assert view._act_pin.text() == "取消置顶"
     view.set_pinned(False)
     assert view._act_pin.text() == "置顶"
+
+
+# ── 拖拽 / 单击 ─────────────────────────────────────────────
 
 
 def _mouse_event(type_, local, global_, button=Qt.LeftButton, buttons=Qt.LeftButton):
@@ -242,10 +269,9 @@ def test_load_jpg_pet_gets_transparency(app, tmp_path, monkeypatch):
 def test_idle_animations_start_and_stop(app, tmp_path, monkeypatch):
     """空闲动画启停：start 运行、stop 停止且变换复位"""
     monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
-    from PySide6.QtCore import QAbstractAnimation
 
     view = PetView()
-    view.load_pet("cat")
+    view.load_pet(BUILTIN_PET)
     view.start_idle()
     assert view._float_anim.state() == QAbstractAnimation.Running
     assert view._breath_anim.state() == QAbstractAnimation.Running
@@ -266,9 +292,165 @@ def test_random_action_runs_without_error(app, tmp_path, monkeypatch):
     monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
 
     view = PetView()
-    view.load_pet("cat")
+    view.load_pet(BUILTIN_PET)
     view.start_idle()
     view._do_random_action()
     app.processEvents()
     assert view._active_action is not None
     view.stop_idle()
+
+
+def test_animation_enabled_toggle(app, tmp_path, monkeypatch):
+    """右键菜单暂停动画：开关关闭后 start_idle 被忽略，信号正确发射"""
+    monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
+
+    view = PetView()
+    view.load_pet(BUILTIN_PET)
+    view.start_idle()
+    toggles = []
+    view.signal_animation_toggled.connect(lambda enabled: toggles.append(enabled))
+
+    # 勾选"暂停动画" → 停掉动画
+    view._act_animation.setChecked(True)
+    assert not view._animations_enabled
+    assert view._float_anim.state() == QAbstractAnimation.Stopped
+    # 关闭时调用 start_idle 被忽略
+    view.start_idle()
+    assert view._float_anim.state() == QAbstractAnimation.Stopped
+
+    # 取消勾选 → 恢复
+    view._act_animation.setChecked(False)
+    assert view._animations_enabled
+    assert toggles == [False, True]
+    view.start_idle()
+    assert view._float_anim.state() == QAbstractAnimation.Running
+    view.stop_idle()
+
+
+# ── 展开锚点（桌宠贴屏幕边缘，不瞬移） ─────────────────────
+
+
+def _wait_animation(app, window=None, ms=2000):
+    """轮询事件循环直到窗口动画完成（超时上限 ms）"""
+    import time
+    deadline = time.time() + ms / 1000
+    while time.time() < deadline:
+        app.processEvents()
+        if window is None or not window._animation_running:
+            return
+        time.sleep(0.01)
+    app.processEvents()
+
+
+def _make_window(app, tmp_path, monkeypatch):
+    monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
+    from app.views.main_window import MainWindow
+    window = MainWindow()
+    pet = PetView()
+    window.set_views(pet, pet)
+    window.show()
+    app.processEvents()
+    return window
+
+
+def _screen_geo(app, window):
+    from PySide6.QtWidgets import QApplication
+    screen = QApplication.screenAt(window.pos()) or QApplication.primaryScreen()
+    return screen.availableGeometry()
+
+
+def test_expand_at_right_edge_anchors_right(app, tmp_path, monkeypatch):
+    """回归：桌宠贴右边缘展开 → 右上锚点，向左下展开，右边缘保持原位"""
+    window = _make_window(app, tmp_path, monkeypatch)
+    geo = _screen_geo(app, window)
+    window.move(geo.right() - window.width(), geo.top() + 40)
+    app.processEvents()
+
+    before_right = window.geometry().right()
+    window.expand()
+    _wait_animation(app, window)
+
+    assert window.mode == "expanded"
+    assert window.geometry().right() == before_right  # 右边缘不动，无瞬移
+    assert window.x() + window.width() <= geo.right()
+    assert window.y() + window.height() <= geo.bottom()
+    window.close()
+    window.deleteLater()
+
+
+def test_expand_at_bottom_edge_anchors_bottom(app, tmp_path, monkeypatch):
+    """回归：桌宠贴底边缘展开 → 左下锚点，向右上展开，下边缘保持原位"""
+    window = _make_window(app, tmp_path, monkeypatch)
+    geo = _screen_geo(app, window)
+    window.move(geo.left() + 40, geo.bottom() - window.height())
+    app.processEvents()
+
+    before_bottom = window.geometry().bottom()
+    window.expand()
+    _wait_animation(app, window)
+
+    assert window.mode == "expanded"
+    assert window.geometry().bottom() == before_bottom  # 下边缘不动，无瞬移
+    assert window.y() + window.height() <= geo.bottom()
+    assert window.x() + window.width() <= geo.right()
+    window.close()
+    window.deleteLater()
+
+
+def test_expand_at_corner_anchors_corner(app, tmp_path, monkeypatch):
+    """回归：桌宠贴右下角展开 → 右下锚点，向左上展开，两边缘均保持"""
+    window = _make_window(app, tmp_path, monkeypatch)
+    geo = _screen_geo(app, window)
+    window.move(geo.right() - window.width(),
+                geo.bottom() - window.height())
+    app.processEvents()
+
+    before = window.geometry()
+    window.expand()
+    _wait_animation(app, window)
+
+    assert window.mode == "expanded"
+    after = window.geometry()
+    assert after.right() == before.right()
+    assert after.bottom() == before.bottom()
+    assert after.left() >= geo.left() and after.top() >= geo.top()
+    window.close()
+    window.deleteLater()
+
+
+def test_expand_center_not_moved(app, tmp_path, monkeypatch):
+    """回归：桌宠在屏幕中央（展开后不越界）时展开不移动位置"""
+    window = _make_window(app, tmp_path, monkeypatch)
+    geo = _screen_geo(app, window)
+    window.move(
+        (geo.width() - AppConfig.EXPANDED_WIDTH) // 2,
+        (geo.height() - AppConfig.EXPANDED_HEIGHT) // 2)
+    app.processEvents()
+
+    before = window.pos()
+    window.expand()
+    _wait_animation(app, window)
+
+    assert window.mode == "expanded"
+    assert window.pos() == before
+    window.close()
+    window.deleteLater()
+
+
+def test_collapse_returns_to_original_position(app, tmp_path, monkeypatch):
+    """回归：右边缘展开后折叠，用同一锚点收缩回桌宠原位"""
+    window = _make_window(app, tmp_path, monkeypatch)
+    geo = _screen_geo(app, window)
+    original = geo.right() - window.width(), geo.top() + 40
+    window.move(*original)
+    app.processEvents()
+
+    window.expand()
+    _wait_animation(app, window)
+    window.collapse()
+    _wait_animation(app, window)
+
+    assert window.mode == "collapsed"
+    assert window.pos() == QPoint(*original)
+    window.close()
+    window.deleteLater()

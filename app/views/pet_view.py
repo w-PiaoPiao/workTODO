@@ -221,6 +221,7 @@ class PetView(QWidget):
     signal_quick_add_clicked = Signal()
     signal_toggle_pin = Signal()  # 置顶切换（无参数，控制器管理状态）
     signal_quit_requested = Signal()  # 退出应用
+    signal_animation_toggled = Signal(bool)  # 空闲动画启用状态
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -231,6 +232,7 @@ class PetView(QWidget):
         self._press_global = QPoint()
         self._pressed = False
         self._count = 0
+        self._animations_enabled = True  # 空闲动画总开关（右键菜单控制）
 
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
@@ -265,15 +267,20 @@ class PetView(QWidget):
         self._act_quick_add = QAction("快速添加", self._context_menu)
         self._act_pin = QAction("", self._context_menu)
         self._act_quit = QAction("退出", self._context_menu)
+        self._act_animation = QAction("暂停动画", self._context_menu)
+        self._act_animation.setCheckable(True)
         self._context_menu.addAction(self._act_expand)
         self._context_menu.addAction(self._act_quick_add)
         self._context_menu.addSeparator()
         self._context_menu.addAction(self._act_pin)
+        self._context_menu.addSeparator()
+        self._context_menu.addAction(self._act_animation)
         self._context_menu.addAction(self._act_quit)
         self._act_expand.triggered.connect(self.signal_expand_clicked.emit)
         self._act_quick_add.triggered.connect(self.signal_quick_add_clicked.emit)
         self._act_pin.triggered.connect(self.signal_toggle_pin.emit)
         self._act_quit.triggered.connect(self.signal_quit_requested.emit)
+        self._act_animation.toggled.connect(self._on_animation_toggled)
 
         AppTheme.register(self.reapply_theme)
 
@@ -384,8 +391,24 @@ class PetView(QWidget):
 
     # ── 动画总开关 ──────────────────────────────────────────
 
+    # ── 动画总开关 ──────────────────────────────────────────
+
+    def set_animation_enabled(self, enabled: bool) -> None:
+        """设置空闲动画开关（由控制器恢复持久化状态 / 菜单切换时调用）"""
+        self._animations_enabled = enabled
+        self._act_animation.setChecked(not enabled)  # 勾选 = 暂停
+        if not enabled:
+            self.stop_idle()
+
+    def _on_animation_toggled(self, paused: bool) -> None:
+        """右键菜单"暂停动画"勾选变化"""
+        self.set_animation_enabled(not paused)
+        self.signal_animation_toggled.emit(not paused)
+
     def start_idle(self) -> None:
-        """开始空闲动画（折叠态展示时调用）"""
+        """开始空闲动画（折叠态展示时调用；开关关闭时忽略）"""
+        if not self._animations_enabled:
+            return
         self._float_anim.start()
         self._breath_anim.start()
         self._schedule_random_action()
@@ -419,8 +442,7 @@ class PetView(QWidget):
         pets = {p["id"]: p for p in discover_pets()}
         if pet_id not in pets:
             # 兜底：用户选中素材已被删除 → 使用第一个可用素材
-            pet_id = pets["cat"]["id"] if "cat" in pets else (
-                next(iter(pets), "") if pets else "")
+            pet_id = next(iter(pets), "") if pets else ""
         self._pet_id = pet_id
         if not pet_id:
             return

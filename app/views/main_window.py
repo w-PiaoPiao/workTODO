@@ -44,6 +44,7 @@ class MainWindow(QWidget):
         self._drag_pos = QPoint()
         self._is_dragging = False
         self._animation_running = False
+        self._expand_anchor = "top_left"  # 最近一次展开的锚点（折叠时反向收缩）
 
         # ── 贴顶隐藏状态 ──────────────────────────────────
         self._stuck_to_top = False         # 是否处于贴顶模式
@@ -134,6 +135,9 @@ class MainWindow(QWidget):
         if self._stuck_to_top:
             self._full_unstick()
             self.move(self._restore_rect.topLeft())
+        # 选择展开锚点（右侧/下方受限时锚定对应边缘，向屏幕内侧展开，不瞬移）
+        self._expand_anchor = self._choose_expand_anchor()
+        base_geo = self.geometry()  # 桌宠态矩形（改尺寸约束前记录）
         self._mode = "expanded"
 
         # 先解除固定尺寸，再切换视图，最后动画展开
@@ -141,7 +145,9 @@ class MainWindow(QWidget):
         self.setMinimumSize(AppConfig.EXPANDED_MIN_WIDTH, AppConfig.EXPANDED_MIN_HEIGHT)
         self.setMaximumSize(AppConfig.EXPANDED_MAX_WIDTH, AppConfig.EXPANDED_MAX_HEIGHT)
         self._stack.setCurrentWidget(self._expanded_view)
-        self._animate_size(self._expanded_size.width(), self._expanded_size.height())
+        self._animate_size(
+            self._expanded_size.width(), self._expanded_size.height(),
+            anchor=self._expand_anchor, base_geo=base_geo)
         self.signal_mode_changed.emit("expanded")
 
     def collapse(self) -> None:
@@ -150,13 +156,17 @@ class MainWindow(QWidget):
             return
         if self._stuck_to_top:
             self._full_unstick()
+        base_geo = self.geometry()  # 面板矩形（改尺寸约束前记录）
         self._mode = "collapsed"
 
         # 先动画缩小，动画结束后再切换视图并固定尺寸
         self.setMaximumSize(16777215, 16777215)
         self.setMinimumSize(0, 0)
         self.setFixedSize(QSize(16777215, 16777215))
-        self._animate_size(self._collapsed_size.width(), self._collapsed_size.height())
+        # 用与展开相同的锚点反向收缩 → 桌宠回到原位，可逆无瞬移
+        self._animate_size(
+            self._collapsed_size.width(), self._collapsed_size.height(),
+            anchor=self._expand_anchor, base_geo=base_geo)
         self.signal_mode_changed.emit("collapsed")
 
     # ── 窗口拖拽 ──────────────────────────────────────────
@@ -198,16 +208,26 @@ class MainWindow(QWidget):
 
     # ── 动画 ──────────────────────────────────────────────
 
-    def _animate_size(self, target_w: int, target_h: int) -> None:
-        """带动画改变窗口大小"""
+    def _animate_size(self, target_w: int, target_h: int,
+                      anchor: str = "top_left", base_geo: QRect | None = None) -> None:
+        """带动画改变窗口大小，指定固定不动的锚点角。
+
+        base_geo：锚点计算的基准矩形（必须是改尺寸约束前的几何，
+        因为 setMinimumSize 等会触发中间态 resize，基于中间态计算会错位）。
+        """
         self._animation_running = True
         self.anim = QPropertyAnimation(self, b"geometry")
         self.anim.setDuration(AppConfig.ANIMATION_MS)
         self.anim.setEasingCurve(QEasingCurve.OutCubic)
 
-        current = self.geometry()
-        self.anim.setStartValue(current)
-        self.anim.setEndValue(QRect(current.x(), current.y(), target_w, target_h))
+        base = base_geo if base_geo is not None else self.geometry()
+        x, y = base.x(), base.y()
+        if anchor in ("top_right", "bottom_right"):
+            x = base.x() + base.width() - target_w
+        if anchor in ("bottom_left", "bottom_right"):
+            y = base.y() + base.height() - target_h
+        self.anim.setStartValue(self.geometry())
+        self.anim.setEndValue(QRect(x, y, target_w, target_h))
         self.anim.finished.connect(self._on_animation_finished)
         self.anim.start()
 
@@ -220,6 +240,31 @@ class MainWindow(QWidget):
             self.setFixedSize(self._collapsed_size)
             self._set_pet_idle(True)
         # 展开模式不锁固定尺寸，允许用户拖拽缩放
+
+    def _choose_expand_anchor(self) -> str:
+        """根据桌宠位置选择展开锚点，保证面板完整可见且不瞬移。
+
+        - 默认左上：向右下展开
+        - 右侧受限：锚定右上角，向左下展开
+        - 下方受限：锚定左下角，向右上展开
+        - 双侧受限：锚定右下角，向左上展开
+        """
+        screen = self._current_screen()
+        if not screen:
+            return "top_left"
+        geo = screen.availableGeometry()
+        margin = AppConfig.SCREEN_MARGIN
+        w, h = self._expanded_size.width(), self._expanded_size.height()
+
+        over_right = self.x() + w > geo.right() - margin
+        over_bottom = self.y() + h > geo.bottom() - margin
+        if over_right and over_bottom:
+            return "bottom_right"
+        if over_right:
+            return "top_right"
+        if over_bottom:
+            return "bottom_left"
+        return "top_left"
 
     # ── 窗口管理 ──────────────────────────────────────────
 
