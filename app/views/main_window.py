@@ -36,6 +36,8 @@ class MainWindow(QWidget):
             | Qt.Tool  # 不在任务栏显示
         )
         self.setAttribute(Qt.WA_ShowWithoutActivating, False)
+        # 透明背景：桌宠形态透明浮于桌面（展开面板自带背景色，不受影响）
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
 
         # ── 状态 ──────────────────────────────────────────
         self._mode = "collapsed"  # "collapsed" | "expanded"
@@ -76,7 +78,7 @@ class MainWindow(QWidget):
         AppTheme.register(lambda: self.setStyleSheet(AppTheme.global_qss()))
 
         # ── 默认尺寸 ──────────────────────────────────────
-        self._collapsed_size = QSize(AppConfig.COLLAPSED_WIDTH, AppConfig.COLLAPSED_HEIGHT)
+        self._collapsed_size = QSize(AppConfig.PET_WIDTH, AppConfig.PET_HEIGHT)
         self._expanded_size = QSize(AppConfig.EXPANDED_WIDTH, AppConfig.EXPANDED_HEIGHT)
 
         # ── 初始位置（右上角） ────────────────────────────
@@ -107,10 +109,31 @@ class MainWindow(QWidget):
         else:
             self.collapse()
 
+    def _set_pet_idle(self, active: bool) -> None:
+        """启停桌宠空闲动画（贴顶/拖拽/展开时停止，避免互相干扰）"""
+        view = self._collapsed_view
+        if view is None or self._mode != "collapsed":
+            return
+        handler = getattr(view, "start_idle" if active else "stop_idle", None)
+        if handler is None:
+            return
+        if active and not self._animation_running:
+            handler()
+        elif not active:
+            handler()
+
+    def start_collapsed_idle(self) -> None:
+        """启动折叠态空闲动画（应用启动后由控制器调用一次）"""
+        self._set_pet_idle(True)
+
     def expand(self) -> None:
         """展开为完整列表"""
         if self._mode == "expanded" or self._animation_running:
             return
+        self._set_pet_idle(False)
+        if self._stuck_to_top:
+            self._full_unstick()
+            self.move(self._restore_rect.topLeft())
         self._mode = "expanded"
 
         # 先解除固定尺寸，再切换视图，最后动画展开
@@ -125,6 +148,8 @@ class MainWindow(QWidget):
         """折叠为紧凑条"""
         if self._mode == "collapsed" or self._animation_running:
             return
+        if self._stuck_to_top:
+            self._full_unstick()
         self._mode = "collapsed"
 
         # 先动画缩小，动画结束后再切换视图并固定尺寸
@@ -138,6 +163,7 @@ class MainWindow(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.LeftButton:
+            self._set_pet_idle(False)
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             self._is_dragging = True
             event.accept()
@@ -155,6 +181,7 @@ class MainWindow(QWidget):
             if not self._check_and_stick_to_top():
                 self._snap_to_screen_edge()
                 self._save_position()
+                self._set_pet_idle(True)
             event.accept()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
@@ -191,6 +218,7 @@ class MainWindow(QWidget):
         if self._mode == "collapsed":
             self._stack.setCurrentWidget(self._collapsed_view)
             self.setFixedSize(self._collapsed_size)
+            self._set_pet_idle(True)
         # 展开模式不锁固定尺寸，允许用户拖拽缩放
 
     # ── 窗口管理 ──────────────────────────────────────────
@@ -285,6 +313,7 @@ class MainWindow(QWidget):
         self._stuck_screen_geo = geo
         self._stuck_to_top = True
         self._temporarily_visible = False
+        self._set_pet_idle(False)
 
         new_y = geo.top() - self.height() + AppConfig.STICK_TO_TOP_PEEK_HEIGHT
         x = max(geo.left(), min(self.x(), geo.right() - self.width()))
@@ -308,6 +337,7 @@ class MainWindow(QWidget):
             return
         self._temporarily_visible = True
         self.move(self._restore_rect.topLeft())
+        self._set_pet_idle(True)
 
     def _schedule_hide(self) -> None:
         """安排隐藏计时（鼠标离开窗口时调用）"""
@@ -323,6 +353,7 @@ class MainWindow(QWidget):
         if not self._stuck_to_top or not self._temporarily_visible:
             return
         self._temporarily_visible = False
+        self._set_pet_idle(False)
         geo = self._stuck_screen_geo
         restore_pos = self._restore_rect.topLeft()
         new_y = geo.top() - self._restore_rect.height() + AppConfig.STICK_TO_TOP_PEEK_HEIGHT
@@ -390,6 +421,7 @@ class MainWindow(QWidget):
         if self._stuck_to_top:
             self._full_unstick()
             self.move(self._restore_rect.topLeft())
+        self._set_pet_idle(True)
 
     def set_opacity(self, value: float) -> None:
         """设置窗口透明度 (0.0 ~ 1.0)"""

@@ -2,7 +2,7 @@
 
 > Windows 桌面悬浮待办事项软件 — 像便利贴一样悬浮在桌面，支持深色/浅色主题、进度追踪、卡片排序、截止日期提醒、彩色便签。
 
-![Python](https://img.shields.io/badge/Python-3.12-blue) ![PySide6](https://img.shields.io/badge/PySide6-6.11%2B-green) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey) ![Version](https://img.shields.io/badge/Version-0.4.0-orange)
+![Python](https://img.shields.io/badge/Python-3.12-blue) ![PySide6](https://img.shields.io/badge/PySide6-6.11%2B-green) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey) ![Version](https://img.shields.io/badge/Version-0.4.1-orange)
 
 ---
 
@@ -11,7 +11,8 @@
 | 功能 | 说明 |
 |------|------|
 | 🪟 **桌面悬浮** | 窗口始终置顶，不被其他窗口遮挡，随时可见 |
-| ↔️ **折叠/展开** | 折叠为紧凑条（仅显示计数），展开为完整待办列表 |
+| 🐾 **桌宠形态** | 折叠后变为桌面宠物，自定义图片形象，白底自动去除，空闲动画（漂浮/呼吸/歪头/跳跃） |
+| ↔️ **折叠/展开** | 单击桌宠展开完整列表，收起回到桌宠形态 |
 | 🌗 **主题三态** | 浅色 / 深色 / 跟随系统，一键切换，持久化记忆 |
 | ⚡ **快速添加** | 折叠/展开模式下都能一键添加新待办 |
 | 📝 **进度追踪** | 每条待办可多次添加进度描述，自动记录时间戳 |
@@ -35,14 +36,25 @@
 | ⌨️ **键盘快捷键** | Ctrl+N 新建、Ctrl+F 搜索、Esc 折叠 |
 | 🖥️ **多显示器** | 自动吸附当前所在屏幕边界 |
 | 🔒 **单实例** | 防止同时打开多个窗口 |
-| ⚙️ **设置面板** | 窗口透明度（30%~100%）+ 字号缩放（85%~130%） |
+| ⚙️ **设置面板** | 窗口透明度（30%~100%）+ 字号缩放（85%~130%）+ 桌宠形象切换 |
+
+### 🐾 桌宠自定义形象
+
+把图片文件放入以下任一目录，即可在 **设置面板（⚙️）→ 宠物** 中切换：
+
+- `%LOCALAPPDATA%\待办事项和便签\pets\`（推荐，打包后也可随时添加）
+- `app/resources/pets/`（内置目录，随源码/打包分发）
+
+支持 PNG / JPG / GIF，文件名即形象名。**白底 JPG/PNG 会自动去除背景**（仅清除连通到边缘的白色，角色内部白色保留），处理结果缓存于 `pets/_processed/`，修改原图后自动重新处理。
+
+建议素材规格：正方形、512×512 以上、主体居中。
 
 ## 📷 效果预览
 
 ```
-┌─────────────────────────────────────┐
-│ 📋 3 项待办         [＋] [📌] [⤢] │  ← 折叠模式：迷你条
-└─────────────────────────────────────┘
+      ╭─────╮
+      │ 🐱 ③│   ← 折叠模式：桌宠（右上角计数角标，单击展开）
+      ╰─────╯
 
 ┌─────────────────────────────────────────┐
 │ 待办事项      [⚡][🌙][🔍][📌][🔮][━] │
@@ -179,7 +191,7 @@ pyinstaller --onefile --windowed \
 │   └── views/
 │       ├── theme.py              # 主题/样式系统（通用按钮工厂）
 │       ├── main_window.py        # 主窗口（无边框、置顶、动画）
-│       ├── collapsed_view.py     # 折叠模式视图
+│       ├── pet_view.py           # 桌宠视图（折叠模式，白底去除+空闲动画）
 │       ├── expanded_view.py      # 展开模式视图
 │       ├── title_bar.py          # 标题栏组件（功能按钮组）
 │       ├── drag_drop_manager.py  # 拖放排序管理器
@@ -191,12 +203,14 @@ pyinstaller --onefile --windowed \
 │       ├── custom_tooltip.py     # 自定义 tooltip（跟随主题）
 │       └── archive_dialog.py     # 归档查看对话框
 ├── tools/
-│   └── make_icon.py              # 应用图标生成脚本
+│   ├── make_icon.py              # 应用图标生成脚本
+│   └── make_pet_placeholders.py  # 桌宠默认形象生成脚本
 ├── tests/                        # 自动化测试
 │   ├── test_todo_item.py         # 数据模型测试
 │   ├── test_todo_store.py        # 存储层测试
 │   ├── test_note_store.py        # 便签存储测试
 │   ├── test_app_controller.py    # 控制器级测试（offscreen）
+│   ├── test_pet_view.py          # 桌宠视图测试（素材/去白底/动画/拖拽）
 │   └── conftest.py               # 测试 fixtures
 └── data/                         # 运行时数据（自动创建）
 ```
@@ -229,6 +243,7 @@ pyinstaller --onefile --windowed \
 
 | 版本 | 日期 | 主要内容 |
 |------|------|----------|
+| v0.4.1 | 2026-08-12 | 折叠模式改为桌宠形态：自定义图片形象（白底自动去除）、空闲动画（漂浮/呼吸/随机歪头跳跃/悬停弹跳）、计数角标、右键菜单、设置面板切换形象，15 项桌宠测试 |
 | v0.4.0 | 2026-07-31 | 截止日期+到期提醒、分类标签、彩色便签、数据备份导入、统计面板、主题跟随系统、字号缩放、防抖落盘、应用图标、83 项测试 |
 | v0.3.1 | 2026-07-22 | 代码架构优化：ExpandedView 拆分、主题观察者、差异化刷新、QLockFile 单实例锁、33 项自动化测试 |
 | v0.3.0 | 2026-07-17 | 窗口透明度调节（🔮 弹出滑块面板）、全部卡片一键折叠/展开（⊟/⊞） |

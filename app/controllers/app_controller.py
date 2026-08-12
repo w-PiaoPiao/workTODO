@@ -26,7 +26,7 @@ from app.models.todo_store import TodoStore
 from app.models.note import Note, NoteStore
 from app.views.theme import AppTheme
 from app.views.main_window import MainWindow
-from app.views.collapsed_view import CollapsedView
+from app.views.pet_view import PetView, discover_pets
 from app.views.expanded_view import ExpandedView
 from app.views.archive_dialog import ArchiveDialog
 from app.services.theme_service import ThemeService
@@ -56,11 +56,11 @@ class AppController(QObject):
 
         # ── UI 层 ─────────────────────────────────────────
         self._window = MainWindow()
-        self._collapsed_view = CollapsedView()
+        self._pet_view = PetView()
         self._expanded_view = ExpandedView()
 
         # 注入视图到主窗口
-        self._window.set_views(self._collapsed_view, self._expanded_view)
+        self._window.set_views(self._pet_view, self._expanded_view)
 
         # ── 系统服务（托盘 / 自启 / 提醒） ─────────────────
         self._tray = TrayService(self._window)
@@ -68,6 +68,12 @@ class AppController(QObject):
         self._reminder = ReminderService(self)
         self._reminder.configure(lambda: self._todos, self._show_notification)
 
+        # ── 桌宠形象 ──────────────────────────────────────
+        self._pets = discover_pets()
+        settings = QSettings("Personal", "待办事项和便签")
+        pet_id = settings.value("window/pet", "")
+        self._pet_view.load_pet(pet_id)
+        self._expanded_view.set_pets(self._pets, self._pet_view.pet_id())
         self._tray.signal_show_requested.connect(self._on_tray_show)
         self._tray.signal_quit_requested.connect(self._on_quit)
         self._theme.signal_theme_applied.connect(self._on_theme_applied)
@@ -98,6 +104,7 @@ class AppController(QObject):
 
         # ── 显示窗口 ──────────────────────────────────
         self._window.show()
+        self._window.start_collapsed_idle()
 
         # ── 恢复窗口状态（置顶、位置等）───────────────
         self._restore_window_state()
@@ -189,7 +196,7 @@ class AppController(QObject):
         # 更新计数
         active_count = len([t for t in self._todos if t.is_active])
         archived_count = len(self._archived)
-        self._collapsed_view.update_count(active_count)
+        self._pet_view.update_count(active_count)
         self._expanded_view.update_stats(active_count, archived_count)
 
     def _refresh_notes(self) -> None:
@@ -214,9 +221,9 @@ class AppController(QObject):
     def _connect_signals(self) -> None:
         """连接所有视图信号到控制器槽函数"""
 
-        # 折叠视图
-        self._collapsed_view.signal_expand_clicked.connect(self._window.expand)
-        self._collapsed_view.signal_quick_add_clicked.connect(
+        # 折叠视图（桌宠）
+        self._pet_view.signal_expand_clicked.connect(self._window.expand)
+        self._pet_view.signal_quick_add_clicked.connect(
             self._on_quick_add_collapsed
         )
 
@@ -254,13 +261,15 @@ class AppController(QObject):
         self._expanded_view.signal_notes_added.connect(self._on_notes_added)
         self._expanded_view.signal_note_updated.connect(self._on_note_updated)
         self._expanded_view.signal_note_deleted.connect(self._on_note_deleted)
+        self._expanded_view.signal_pet_selected.connect(self._on_pet_selected)
 
         # 主窗口
         self._window.signal_close_requested.connect(self._on_close_requested)
 
         # 置顶切换（两个视图同步）
-        self._collapsed_view.signal_toggle_pin.connect(self._on_toggle_pin)
+        self._pet_view.signal_toggle_pin.connect(self._on_toggle_pin)
         self._expanded_view.signal_toggle_pin.connect(self._on_toggle_pin)
+        self._pet_view.signal_quit_requested.connect(self._on_quit)
 
         # ── 键盘快捷键 ──────────────────────────────────
         self._setup_shortcuts()
@@ -674,8 +683,18 @@ class AppController(QObject):
 
     def _sync_pin_state(self) -> None:
         """同步置顶按钮样式"""
-        self._collapsed_view.set_pinned(self._pinned)
+        self._pet_view.set_pinned(self._pinned)
         self._expanded_view.set_pinned(self._pinned)
+
+    # ── 桌宠形象 ──────────────────────────────────────────
+
+    def _on_pet_selected(self, pet_id: str) -> None:
+        """切换桌宠形象并持久化"""
+        self._pet_view.load_pet(pet_id)
+        settings = QSettings("Personal", "待办事项和便签")
+        settings.setValue("window/pet", self._pet_view.pet_id())
+        self._expanded_view.set_selected_pet(self._pet_view.pet_id())
+        self._show_notification("已切换桌宠形象")
 
     # ── 主题（浅色 / 深色 / 跟随系统） ────────────────────
 

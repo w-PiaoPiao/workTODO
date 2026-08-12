@@ -481,6 +481,40 @@ class AppTheme:
     # ── 对话框通用样式（归档对话框等） ────────────────────
 
     @classmethod
+    def pet_badge_style(cls) -> str:
+        """桌宠计数角标（accent 底白字，白色描边保证两种主题都醒目）"""
+        C = cls.C
+        radius = AppConfig.PET_BADGE_SIZE // 2
+        return f"""
+            QLabel {{
+                font: {cls.FONT["small"]};
+                font-weight: bold;
+                color: white;
+                background: {C["accent"]};
+                border-radius: {radius}px;
+                border: 2px solid white;
+                padding: 0px 4px;
+            }}
+        """
+
+    @classmethod
+    def pet_thumb_btn(cls, selected: bool) -> str:
+        """桌宠形象缩略图按钮（选中 → accent 描边）"""
+        C = cls.C
+        border = f"2px solid {C['accent']}" if selected else f"1px solid {C['border']}"
+        return f"""
+            QPushButton {{
+                background: transparent;
+                border: {border};
+                border-radius: 6px;
+                padding: 1px;
+            }}
+            QPushButton:hover {{
+                border-color: {C["accent"]};
+            }}
+        """
+
+    @classmethod
     def dialog_frame_style(cls, selector: str = "QDialog") -> str:
         """对话框整体框架"""
         C = cls.C

@@ -23,7 +23,7 @@ from app.views.theme import AppTheme
 # 测试期间可能写入的 QSettings 键（teardown 时清理）
 _SETTINGS_KEYS = (
     "theme/mode", "theme/dark", "ui/font_scale",
-    "window/opacity", "window/pinned",
+    "window/opacity", "window/pinned", "window/pet",
 )
 
 

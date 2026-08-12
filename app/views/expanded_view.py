@@ -11,12 +11,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Qt, QTimer, QEvent, QPoint, QRect, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Signal, Qt, QTimer, QEvent, QPoint, QRect, QPropertyAnimation, QEasingCurve, QSize
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QScrollArea, QFrame, QSizePolicy, QSizeGrip, QApplication, QSlider,
     QStackedWidget, QTabBar,
 )
+from PySide6.QtGui import QIcon, QPixmap
 from app.config import AppConfig
 from app.views.theme import AppTheme
 from app.models.todo_item import TodoItem
@@ -56,6 +57,7 @@ class ExpandedView(QFrame):
     signal_notes_added = Signal(str, str)  # content, color
     signal_note_updated = Signal(str, str, str)  # note_id, content, color
     signal_note_deleted = Signal(str)  # note_id
+    signal_pet_selected = Signal(str)  # 桌宠形象 id
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -73,6 +75,9 @@ class ExpandedView(QFrame):
         self._opacity = AppConfig.WINDOW_OPACITY_DEFAULT
         self._active_tag = ""  # 当前标签筛选（空=全部）
         self._all_tags: list[str] = []
+        self._pets: list[dict] = []  # 桌宠形象 [{id, name, path}]
+        self._pet_buttons: dict[str, QPushButton] = {}  # pet_id → 缩略图按钮
+        self._pet_thumb_icons: dict[str, QIcon] = {}  # pet_id → 缩略图图标缓存
 
         # 搜索防抖 —— 复用单个 timer，避免每次按键创建新对象
         self._search_timer = QTimer()
@@ -237,9 +242,9 @@ class ExpandedView(QFrame):
     # ── 设置面板（透明度 + 字号） ──────────────────────────
 
     def _make_settings_panel(self) -> QFrame:
-        """创建设置弹出面板（透明度滑块 + 字号滑块）"""
+        """创建设置弹出面板（透明度滑块 + 字号滑块 + 桌宠形象）"""
         panel = QFrame(self)
-        panel.setFixedSize(220, 84)
+        panel.setFixedSize(220, 130)
         panel.setStyleSheet(AppTheme.popup_panel_style())
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 8, 12, 8)
@@ -291,10 +296,60 @@ class ExpandedView(QFrame):
         font_row.addWidget(self._font_slider, stretch=1)
         font_row.addWidget(self._font_label)
 
+        pet_row = QHBoxLayout()
+        pet_row.setSpacing(6)
+        pet_label = QLabel("宠物")
+        pet_label.setStyleSheet(AppTheme.panel_label_style())
+        pet_label.setFixedWidth(44)
+        self._pet_thumbs_row = QHBoxLayout()
+        self._pet_thumbs_row.setSpacing(4)
+        pet_row.addWidget(pet_label)
+        pet_row.addLayout(self._pet_thumbs_row, stretch=1)
+
         layout.addLayout(opacity_row)
         layout.addLayout(font_row)
+        layout.addLayout(pet_row)
         panel.hide()
         return panel
+
+    def set_pets(self, pets: list[dict], selected_id: str) -> None:
+        """设置桌宠形象列表并构建缩略图按钮（由控制器调用）"""
+        self._pets = pets
+        while self._pet_thumbs_row.count():
+            item = self._pet_thumbs_row.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self._pet_buttons.clear()
+        self._pet_thumb_icons.clear()
+
+        for pet in pets:
+            pixmap = QPixmap(str(pet["path"]))
+            icon = QIcon(pixmap.scaled(
+                26, 26, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self._pet_thumb_icons[pet["id"]] = icon
+
+            btn = QPushButton()
+            btn.setFixedSize(30, 30)
+            btn.setIconSize(QSize(26, 26))
+            btn.setIcon(icon)
+            btn.setToolTip(pet["name"])
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(AppTheme.pet_thumb_btn(pet["id"] == selected_id))
+            btn.clicked.connect(
+                lambda checked=False, pid=pet["id"]: self._on_pet_thumb_clicked(pid))
+            self._pet_thumbs_row.addWidget(btn)
+            self._pet_buttons[pet["id"]] = btn
+
+    def set_selected_pet(self, pet_id: str) -> None:
+        """高亮当前选中的桌宠形象（由控制器调用）"""
+        for pid, btn in self._pet_buttons.items():
+            btn.setStyleSheet(AppTheme.pet_thumb_btn(pid == pet_id))
+
+    def _on_pet_thumb_clicked(self, pet_id: str) -> None:
+        """桌宠形象缩略图点击"""
+        self.set_selected_pet(pet_id)
+        self.signal_pet_selected.emit(pet_id)
 
     def _on_opacity_slider_changed(self, value: int) -> None:
         """滑块值变化时实时更新窗口透明度"""

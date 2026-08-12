@@ -14,7 +14,7 @@ class AppConfig:
 
     # 应用信息
     APP_NAME = "待办事项和便签"
-    APP_VERSION = "0.4.0"
+    APP_VERSION = "0.4.1"
 
     # ── 数据路径 ──────────────────────────────────────────────
     # 数据存储目录：优先使用环境变量覆盖，默认在用户数据目录下
@@ -136,5 +136,38 @@ class AppConfig:
         "border": "#404040",
     }
 
+    # ── 桌宠（折叠模式） ──────────────────────────────────────
+    PET_WIDTH = 140             # 桌宠窗口宽度
+    PET_HEIGHT = 140            # 桌宠窗口高度
+    PET_BADGE_SIZE = 22         # 计数角标尺寸
+    PET_CLICK_THRESHOLD = 8     # 单击判定最大位移（像素，超过视为拖拽）
+    PET_CANVAS_MARGIN = 12      # 绘制边距（容纳漂浮/跳跃超程，避免裁剪）
+    PET_FLOAT_MS = 1600         # 漂浮动画单程时长（毫秒）
+    PET_FLOAT_DELTA = 5         # 漂浮幅度（像素）
+    PET_BREATH_MS = 1800        # 呼吸动画单程时长（毫秒）
+    PET_BREATH_RATIO = 0.05     # 呼吸缩放比例（5%）
+    PET_JUMP_HEIGHT = 12        # 跳跃动作高度（像素，≤ CANVAS_MARGIN）
+    PET_IDLE_ACTION_MIN_MS = 6000    # 随机小动作最小间隔
+    PET_IDLE_ACTION_MAX_MS = 14000   # 随机小动作最大间隔
+    PET_WHITE_SEED_THRESHOLD = 245   # 白底种子点判定阈值（RGB ≥）
+    PET_WHITE_FLOOD_THRESH = 25      # floodfill 容差（吃掉 JPG 压缩噪点）
+    PET_PROCESSED_SIZE = 512         # 去白底处理前缩放尺寸
+    PET_PLACEHOLDERS = ["cat", "dog", "rabbit", "panda"]  # 内置默认形象 id
+    PET_SUBDIR = "pets"         # 素材目录名（resources 与 data 下同名）
+
     # ── 平台检测 ──────────────────────────────────────────────
     IS_WINDOWS = sys.platform == "win32"
+
+    @classmethod
+    def pets_dir(cls) -> Path:
+        """用户桌宠素材目录（数据目录下，打包后可自行增补）"""
+        path = cls.DATA_DIR / cls.PET_SUBDIR
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @classmethod
+    def resource_path(cls, name: str) -> Path:
+        """定位内置资源文件（兼容 PyInstaller 打包后的临时解压目录）"""
+        if getattr(sys, "_MEIPASS", None):
+            return Path(sys._MEIPASS) / name
+        return Path(__file__).resolve().parent.parent / name
