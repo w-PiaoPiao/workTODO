@@ -58,10 +58,12 @@ def main():
     _lock = QLockFile(str(_lock_file_path))
     _lock.setStaleLockTime(5000)  # 5s 过期，兼顾开发调试与崩溃恢复
     if not _lock.tryLock(100):
-        # 已有实例在运行，直接退出
+        # 已有实例在运行，提示后退出
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.warning(None, AppConfig.APP_NAME, "应用已在运行，请查看系统托盘。")
         sys.exit(0)
 
-    # 高 DPI 支持
+    # 统一 Fusion 风格（跨平台一致的控件外观）
     app.setStyle("Fusion")
 
     # ── 全局样式表（必须在 QApplication 级别，QToolTip 是顶层窗口，

@@ -15,6 +15,22 @@ from PySide6.QtWidgets import (
 from app.views.theme import AppTheme
 from app.models.note import Note
 from app.views.note_dialog import NoteDialog
+from app.views.ui_utils import clear_layout
+
+
+class NoteCard(QFrame):
+    """便签卡片（双击任意位置打开编辑）"""
+
+    def __init__(self, parent=None, on_double_click=None):
+        super().__init__(parent)
+        self._on_double_click = on_double_click
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if self._on_double_click:
+            self._on_double_click()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 class NoteView(QWidget):
@@ -84,11 +100,7 @@ class NoteView(QWidget):
         self._notes = list(notes)
 
         # 清空列表
-        while self._list_layout.count() > 1:
-            item = self._list_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+        clear_layout(self._list_layout)
 
         if not notes:
             label = QLabel("还没有便签\n点击右上角 [＋ 新建便签] 记录灵感")
@@ -129,7 +141,7 @@ class NoteView(QWidget):
 
     def _make_card(self, note: Note) -> QFrame:
         """创建一张便签卡片"""
-        card = QFrame()
+        card = NoteCard(on_double_click=lambda n=note: self._on_edit(n))
         card.setStyleSheet(AppTheme.note_card_style(note.color))
         card.setCursor(Qt.PointingHandCursor)
 
@@ -177,11 +189,6 @@ class NoteView(QWidget):
         layout.addLayout(bottom_row)
 
         card.setLayout(layout)
-        # 双击卡片任意位置打开编辑
-        def _dbl(event, n=note):
-            self._on_edit(n)
-            event.accept()
-        card.mouseDoubleClickEvent = _dbl
         return card
 
     def _on_edit(self, note: Note) -> None:

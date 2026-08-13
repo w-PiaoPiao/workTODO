@@ -16,9 +16,9 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QTimer, QSettings
 from PySide6.QtWidgets import (
     QApplication, QMessageBox, QInputDialog,
-    QFileDialog,
+    QFileDialog, QMenu,
 )
-from PySide6.QtGui import QShortcut, QKeySequence, QCursor
+from PySide6.QtGui import QShortcut, QKeySequence, QCursor, QAction
 
 from app.config import AppConfig
 from app.models.todo_item import TodoItem, ProgressEntry, StoreError, CST

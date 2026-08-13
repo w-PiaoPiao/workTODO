@@ -78,3 +78,8 @@ class ReminderService(QObject):
         # 标记本次已检查的 id，避免重复提醒
         if touched_ids:
             settings.setValue(f"reminders/{today_key}", ",".join(touched_ids))
+
+        # 清理历史日期的提醒键，防止 QSettings 键无限累积
+        for key in settings.allKeys():
+            if key.startswith("reminders/") and key != f"reminders/{today_key}":
+                settings.remove(key)

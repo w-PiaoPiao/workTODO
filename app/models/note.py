@@ -11,19 +11,13 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Optional
 
 from app.config import AppConfig
 from app.models.json_io import atomic_write_json, backup_corrupted
-from app.models.todo_item import CST, StoreError
+from app.models.todo_item import CST, StoreError, _now_iso
 
 logger = logging.getLogger(__name__)
-
-
-def _now_iso() -> str:
-    """返回当前时间的 ISO-8601 字符串（北京时间）"""
-    return datetime.now(CST).isoformat(timespec="seconds")
 
 
 @dataclass

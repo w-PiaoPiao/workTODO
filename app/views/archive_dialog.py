@@ -11,14 +11,14 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QScrollArea, QWidget, QFrame, QSizePolicy,
 )
-from PySide6.QtGui import QMouseEvent
 from app.config import AppConfig
 from app.views.theme import AppTheme
+from app.views.ui_utils import DragMixin, clear_layout
 from app.views.elided_label import ElidedLabel
 from app.models.todo_item import TodoItem
 
 
-class ArchiveDialog(QDialog):
+class ArchiveDialog(DragMixin, QDialog):
     """归档查看对话框"""
 
     signal_restore_item = Signal(str)  # item_id
@@ -38,23 +38,6 @@ class ArchiveDialog(QDialog):
 
         self._build_ui()
         self._refresh()
-
-    # ── 窗口拖拽 ──────────────────────────────────────────
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
-
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if event.buttons() == Qt.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
-            event.accept()
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.LeftButton:
-            self._drag_pos = QPoint()
-            event.accept()
 
     # ── UI 构建 ────────────────────────────────────────────
 
@@ -133,11 +116,7 @@ class ArchiveDialog(QDialog):
 
     def _refresh(self) -> None:
         # 清空列表
-        while self._list_layout.count() > 1:
-            item = self._list_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+        clear_layout(self._list_layout)
 
         if not self._filtered_items:
             label = QLabel("暂无归档记录" if not self._search_input.text()

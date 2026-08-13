@@ -126,11 +126,13 @@ class TodoStore:
 
     def archive_item(self, item: TodoItem) -> None:
         """办结一条待办并移入归档（标记脏）"""
+        archived = self.load_archived()
+        if any(i.id == item.id for i in archived):
+            return  # 幂等：已在归档，避免重复归档
         item.status = "completed"
         items = self.load_todos()
         self._todos = [i for i in items if i.id != item.id]
         self._dirty_todos = True
-        archived = self.load_archived()
         archived.append(item)
         self._dirty_archived = True
 
@@ -144,6 +146,8 @@ class TodoStore:
                 archived.pop(i)
                 self._dirty_archived = True
                 items = self.load_todos()
+                max_pos = max((i.position for i in items), default=0)
+                item.position = max_pos + 1
                 items.append(item)
                 self._dirty_todos = True
                 return item

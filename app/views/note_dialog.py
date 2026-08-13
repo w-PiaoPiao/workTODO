@@ -7,17 +7,17 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QPoint
-from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QWidget, QSizePolicy,
 )
 from app.config import AppConfig
 from app.views.theme import AppTheme
+from app.views.ui_utils import DragMixin
 from app.models.note import Note
 
 
-class NoteDialog(QDialog):
+class NoteDialog(DragMixin, QDialog):
     """便签编辑对话框"""
 
     def __init__(self, parent=None, note: Note | None = None):
@@ -36,23 +36,6 @@ class NoteDialog(QDialog):
         self._build_ui()
         if note:
             self._text_edit.setPlainText(note.content)
-
-    # ── 窗口拖拽 ──────────────────────────────────────────
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
-
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if event.buttons() == Qt.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
-            event.accept()
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.LeftButton:
-            self._drag_pos = QPoint()
-            event.accept()
 
     # ── UI ────────────────────────────────────────────────
 

@@ -25,6 +25,7 @@ from app.views.todo_card import TodoCard
 from app.views.title_bar import TitleBar
 from app.views.drag_drop_manager import DragDropManager
 from app.views.note_view import NoteView
+from app.views.ui_utils import clear_layout
 
 
 class ExpandedView(QFrame):
@@ -244,7 +245,7 @@ class ExpandedView(QFrame):
     def _make_settings_panel(self) -> QFrame:
         """创建设置弹出面板（透明度滑块 + 字号滑块 + 桌宠形象）"""
         panel = QFrame(self)
-        panel.setFixedSize(220, 130)
+        panel.setFixedWidth(220)
         panel.setStyleSheet(AppTheme.popup_panel_style())
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(12, 8, 12, 8)
@@ -309,6 +310,7 @@ class ExpandedView(QFrame):
         layout.addLayout(opacity_row)
         layout.addLayout(font_row)
         layout.addLayout(pet_row)
+        panel.adjustSize()
         panel.hide()
         return panel
 
@@ -668,11 +670,7 @@ class ExpandedView(QFrame):
             except RuntimeError:
                 pass
         self._card_map.clear()
-        while self._list_layout.count() > 1:
-            item = self._list_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+        clear_layout(self._list_layout)
 
     def _iter_cards(self):
         """遍历列表中的所有 TodoCard（跳过 stretch 和状态标签）"""

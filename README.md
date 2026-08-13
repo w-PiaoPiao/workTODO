@@ -2,7 +2,7 @@
 
 > Windows 桌面悬浮待办事项软件 — 像便利贴一样悬浮在桌面，支持深色/浅色主题、进度追踪、卡片排序、截止日期提醒、彩色便签。
 
-![Python](https://img.shields.io/badge/Python-3.12-blue) ![PySide6](https://img.shields.io/badge/PySide6-6.11%2B-green) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey) ![Version](https://img.shields.io/badge/Version-0.4.1-orange)
+![Python](https://img.shields.io/badge/Python-3.12-blue) ![PySide6](https://img.shields.io/badge/PySide6-6.11%2B-green) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey) ![Version](https://img.shields.io/badge/Version-0.4.2-orange)
 
 ---
 
@@ -242,6 +242,7 @@ pyinstaller --onefile --windowed \
 
 | 版本 | 日期 | 主要内容 |
 |------|------|----------|
+| v0.4.2 | 2026-08-13 | 代码审查修复：备份菜单 QMenu/QAction 导入缺失崩溃、对话框拖拽与清空布局去重、单实例提示、设置面板自适应、提醒键清理、归档/恢复幂等，133 项测试 |
 | v0.4.1 | 2026-08-12 | 折叠模式改为桌宠形态：自定义图片形象（白底自动去除）、空闲动画（漂浮/呼吸/随机歪头跳跃/悬停弹跳）、计数角标、右键菜单、设置面板切换形象，15 项桌宠测试 |
 | v0.4.0 | 2026-07-31 | 截止日期+到期提醒、分类标签、彩色便签、数据备份导入、统计面板、主题跟随系统、字号缩放、防抖落盘、应用图标、83 项测试 |
 | v0.3.1 | 2026-07-22 | 代码架构优化：ExpandedView 拆分、主题观察者、差异化刷新、QLockFile 单实例锁、33 项自动化测试 |

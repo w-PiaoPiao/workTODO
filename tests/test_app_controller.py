@@ -4,6 +4,7 @@
 便签 CRUD、标签筛选、到期提醒。
 """
 
+import json
 import os
 
 # 必须在导入 PySide6 之前设置无头平台
@@ -13,7 +14,7 @@ from datetime import datetime, timedelta
 
 import pytest
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app.config import AppConfig
 from app.controllers.app_controller import AppController
@@ -155,6 +156,80 @@ class TestControllerNotes:
         controller._on_notes_added("持久化便签", "white")
         controller._note_store.save_notes(controller._notes)
         assert (AppConfig.DATA_DIR / AppConfig.NOTES_FILE).exists()
+
+
+class TestControllerBackup:
+    def test_backup_clicked_no_crash(self, controller, monkeypatch):
+        class _FakeSignal:
+            def connect(self, *args, **kwargs):
+                pass
+
+        class _FakeAction:
+            def __init__(self, text="", parent=None):
+                self.triggered = _FakeSignal()
+
+        class _FakeMenu:
+            def __init__(self, parent=None):
+                pass
+
+            def addAction(self, action):
+                pass
+
+            def addSeparator(self):
+                pass
+
+            def exec(self, pos=None):
+                return None
+
+        monkeypatch.setattr("app.controllers.app_controller.QMenu", _FakeMenu)
+        monkeypatch.setattr("app.controllers.app_controller.QAction", _FakeAction)
+        controller._on_backup_clicked()
+
+    def test_export_data(self, controller, monkeypatch, tmp_path):
+        controller._on_add_item("待办A")
+        controller._on_add_item("待办B")
+        backup_path = tmp_path / "backup.json"
+
+        class _FakeFileDialog:
+            getSaveFileName = staticmethod(
+                lambda *a, **k: (str(backup_path), ""))
+
+        monkeypatch.setattr(
+            "app.controllers.app_controller.QFileDialog", _FakeFileDialog)
+        controller._on_export_data()
+        assert backup_path.exists()
+        data = json.loads(backup_path.read_text("utf-8"))
+        assert data["app"] == AppConfig.APP_NAME
+        assert len(data["todos"]) == 2
+        assert len(data["archived"]) == 0
+
+    def test_import_data(self, controller, monkeypatch, tmp_path):
+        backup_path = tmp_path / "backup.json"
+        backup = {
+            "app": AppConfig.APP_NAME,
+            "version": "0.4.2",
+            "exported_at": "2026-08-13T00:00:00+08:00",
+            "todos": [{"title": "导入的待办"}],
+            "archived": [],
+        }
+        backup_path.write_text(json.dumps(backup, ensure_ascii=False), "utf-8")
+
+        class _FakeFileDialog:
+            getOpenFileName = staticmethod(
+                lambda *a, **k: (str(backup_path), ""))
+
+        class _FakeMsgBox:
+            Yes = QMessageBox.Yes
+            No = QMessageBox.No
+            question = staticmethod(lambda *a, **k: _FakeMsgBox.Yes)
+
+        monkeypatch.setattr(
+            "app.controllers.app_controller.QFileDialog", _FakeFileDialog)
+        monkeypatch.setattr(
+            "app.controllers.app_controller.QMessageBox", _FakeMsgBox)
+        controller._on_import_data()
+        assert len(controller._todos) == 1
+        assert controller._todos[0].title == "导入的待办"
 
 
 class TestControllerReminders:
