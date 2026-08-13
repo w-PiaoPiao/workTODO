@@ -157,7 +157,7 @@ class ProgressWidget(QWidget):
             color: {AppTheme.C["text_disabled"]};
             background: transparent;
         """)
-        time_label.setFixedWidth(50)
+        time_label.setMinimumWidth(50)
 
         text_label = ElidedLabel(entry.text)
         text_label.setStyleSheet(f"""
@@ -197,7 +197,7 @@ class ProgressWidget(QWidget):
             color: {AppTheme.C["text_disabled"]};
             background: transparent;
         """)
-        time_label.setFixedWidth(50)
+        time_label.setMinimumWidth(50)
 
         text_label = ClickableElidedLabel(entry.text)
         text_label._on_double_click = lambda e: self._on_edit_entry(text_label, e)

@@ -87,7 +87,17 @@ class AppTheme:
         cls._current_theme = "dark" if dark else "light"
         cls.C = AppConfig.DARK_COLORS if dark else AppConfig.COLORS
         cls._invalidate_qss()
+        cls._clear_icon_cache()
         cls._notify_listeners()
+
+    @classmethod
+    def _clear_icon_cache(cls) -> None:
+        """主题颜色变化时清空 SVG 图标缓存（延迟导入避免循环依赖）"""
+        try:
+            from app.views.icons import AppIcons
+            AppIcons.clear()
+        except ImportError:
+            pass
 
     @classmethod
     def is_dark(cls) -> bool:
@@ -96,11 +106,26 @@ class AppTheme:
 
     @classmethod
     def apply_palette(cls, app) -> None:
-        """将当前主题色应用到 QApplication palette（用于 tooltip 等）"""
+        """将当前主题色应用到 QApplication palette。
+
+        覆盖 Window/Base/Text 等核心角色，保证依赖 QPalette 的控件
+        （QScrollArea 视口、QMenu、QLineEdit 等）与主题一致，
+        避免系统为深色模式而 app 主题为浅色时出现黑底/文字不清。
+        """
         from PySide6.QtGui import QPalette, QColor
+        C = cls.C
         palette = app.palette()
-        palette.setColor(QPalette.ToolTipBase, QColor(cls.C["bg_card"]))
-        palette.setColor(QPalette.ToolTipText, QColor(cls.C["text_primary"]))
+        palette.setColor(QPalette.Window, QColor(C["bg_primary"]))
+        palette.setColor(QPalette.WindowText, QColor(C["text_primary"]))
+        palette.setColor(QPalette.Base, QColor(C["bg_card"]))
+        palette.setColor(QPalette.Text, QColor(C["text_primary"]))
+        palette.setColor(QPalette.PlaceholderText, QColor(C["text_disabled"]))
+        palette.setColor(QPalette.Button, QColor(C["bg_card"]))
+        palette.setColor(QPalette.ButtonText, QColor(C["text_primary"]))
+        palette.setColor(QPalette.Highlight, QColor(C["accent"]))
+        palette.setColor(QPalette.HighlightedText, QColor("white"))
+        palette.setColor(QPalette.ToolTipBase, QColor(C["bg_card"]))
+        palette.setColor(QPalette.ToolTipText, QColor(C["text_primary"]))
         app.setPalette(palette)
 
     # ── 全局样式表 ────────────────────────────────────────
@@ -225,7 +250,7 @@ class AppTheme:
 
     @classmethod
     def card_style(cls, completed: bool = False) -> str:
-        """待办卡片样式"""
+        """待办卡片样式（置顶指示由内部竖条 widget 提供，见 sticky_bar_style）"""
         C = cls.C
         bg = C["bg_completed"] if completed else C["bg_card"]
         return f"""
@@ -237,6 +262,19 @@ class AppTheme:
             QFrame:hover {{
                 border-color: {C["accent"]};
                 background: {C["bg_hover"] if not completed else bg};
+            }}
+        """
+
+    @classmethod
+    def sticky_bar_style(cls) -> str:
+        """置顶竖条样式（卡片内部左侧 3px accent 竖条，与卡片圆角匹配）"""
+        C = cls.C
+        return f"""
+            QFrame {{
+                background: {C["accent"]};
+                border: none;
+                border-top-left-radius: 6px;
+                border-bottom-left-radius: 6px;
             }}
         """
 
@@ -716,6 +754,33 @@ class AppTheme:
             }}
             QTabBar::tab:hover {{
                 color: {C["text_primary"]};
+            }}
+        """
+
+    @classmethod
+    def menu_style(cls) -> str:
+        """弹出菜单样式（标题栏 ⋯ 溢出菜单）"""
+        C = cls.C
+        return f"""
+            QMenu {{
+                background: {C["bg_card"]};
+                border: 1px solid {C["border"]};
+                border-radius: 6px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                padding: 6px 24px 6px 10px;
+                border-radius: 4px;
+                color: {C["text_primary"]};
+                background: transparent;
+            }}
+            QMenu::item:selected {{
+                background: {C["bg_hover"]};
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: {C["border"]};
+                margin: 4px 8px;
             }}
         """
 

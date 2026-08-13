@@ -263,6 +263,7 @@ class PetView(QWidget):
 
         # ── 右键菜单 ────────────────────────────────────────
         self._context_menu = QMenu(self)
+        self._context_menu.setStyleSheet(AppTheme.menu_style())
         self._act_expand = QAction("展开", self._context_menu)
         self._act_quick_add = QAction("快速添加", self._context_menu)
         self._act_pin = QAction("", self._context_menu)
@@ -551,7 +552,8 @@ class PetView(QWidget):
     # ── 主题重载 ──────────────────────────────────────────────
 
     def reapply_theme(self) -> None:
-        """重新应用当前主题样式（角标颜色）"""
+        """重新应用当前主题样式（角标颜色 + 右键菜单）"""
         self._badge.setStyleSheet(AppTheme.pet_badge_style())
+        self._context_menu.setStyleSheet(AppTheme.menu_style())
         if self._badge.isVisible():
             self.update_count(self._count)

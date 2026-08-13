@@ -99,7 +99,13 @@ class ThemeService(QObject):
     def cycle(self) -> None:
         """主题模式三态轮换：浅色 → 深色 → 自动，并持久化"""
         order = {"light": "dark", "dark": "auto", "auto": "light"}
-        self._theme_mode = order.get(self._theme_mode, "light")
+        self.set_mode(order.get(self._theme_mode, "light"))
+
+    def set_mode(self, mode: str) -> None:
+        """直接设置主题模式（浅色/深色/跟随系统）并持久化"""
+        if mode not in self.THEME_CYCLE or mode == self._theme_mode:
+            return
+        self._theme_mode = mode
         settings = QSettings("Personal", "待办事项和便签")
         settings.setValue(SETTINGS_MODE_KEY, self._theme_mode)
         settings.remove(SETTINGS_OLD_DARK_KEY)  # 清理旧版本键

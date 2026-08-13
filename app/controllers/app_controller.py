@@ -248,7 +248,7 @@ class AppController(QObject):
         self._expanded_view.signal_title_changed.connect(self._on_title_changed)
         self._expanded_view.signal_progress_edited.connect(self._on_edit_progress)
         self._expanded_view.signal_progress_deleted.connect(self._on_delete_progress)
-        self._expanded_view.signal_theme_mode_clicked.connect(self._theme.cycle)
+        self._expanded_view.signal_theme_mode_selected.connect(self._theme.set_mode)
         self._expanded_view.signal_autostart_toggled.connect(self._on_toggle_autostart)
         self._expanded_view.signal_opacity_changed.connect(self._on_opacity_changed)
         self._expanded_view.signal_opacity_committed.connect(

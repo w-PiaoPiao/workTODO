@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QIcon, QPixmap
 from app.config import AppConfig
 from app.views.theme import AppTheme
+from app.views.icons import AppIcons
 from app.models.todo_item import TodoItem
 from app.views.todo_card import TodoCard
 from app.views.title_bar import TitleBar
@@ -45,7 +46,7 @@ class ExpandedView(QFrame):
     signal_title_changed = Signal(str, str)  # item_id, new_title
     signal_progress_edited = Signal(str, str, str)  # item_id, entry_id, new_text
     signal_progress_deleted = Signal(str, str)  # item_id, entry_id
-    signal_theme_mode_clicked = Signal()  # 主题三态轮换
+    signal_theme_mode_selected = Signal(str)  # 主题模式选择（light/dark/auto）
     signal_autostart_toggled = Signal(bool)  # enabled=True
     signal_opacity_changed = Signal(float)  # 0.0 ~ 1.0（实时窗口）
     signal_opacity_committed = Signal(float)  # 0.0 ~ 1.0（松手持久化）
@@ -108,12 +109,14 @@ class ExpandedView(QFrame):
         self._title_bar = TitleBar()
         self._title_bar.signal_collapse_clicked.connect(self.signal_collapse_clicked.emit)
         self._title_bar.signal_autostart_toggled.connect(self.signal_autostart_toggled.emit)
-        self._title_bar.signal_theme_mode_clicked.connect(self.signal_theme_mode_clicked.emit)
+        self._title_bar.signal_theme_mode_selected.connect(self.signal_theme_mode_selected.emit)
         self._title_bar.signal_search_clicked.connect(self._toggle_search)
         self._title_bar.signal_toggle_pin.connect(self.signal_toggle_pin.emit)
         self._title_bar.signal_collapse_cards_toggled.connect(self._toggle_collapse_cards)
         self._title_bar.signal_settings_clicked.connect(self._toggle_settings_panel)
-        self._title_bar.signal_stats_clicked.connect(self.signal_stats_requested.emit)
+        self._title_bar.signal_stats_requested.connect(self.signal_stats_requested.emit)
+        self._title_bar.signal_backup_clicked.connect(self.signal_backup_clicked.emit)
+        self._title_bar.signal_quit_requested.connect(self.signal_quit_requested.emit)
         main_layout.addWidget(self._title_bar)
 
         # ── 待办 / 便签切换标签栏 ─────────────────────────
@@ -143,6 +146,10 @@ class ExpandedView(QFrame):
         # ── 快速添加栏 ────────────────────────────────────
         self._add_bar = self._make_add_bar()
         self._todo_layout.addWidget(self._add_bar)
+
+        # ── 搜索栏（独立成行，默认隐藏） ────────────────────
+        self._search_bar_row = self._make_search_bar()
+        self._todo_layout.addWidget(self._search_bar_row)
 
         # ── 标签筛选行 ────────────────────────────────────
         self._tag_row = self._make_tag_row()
@@ -427,7 +434,7 @@ class ExpandedView(QFrame):
             label.setText(text)
 
         if not self._stats_panel.isVisible():
-            btn_rect = self._title_bar.stats_btn_global_rect()
+            btn_rect = self._title_bar.more_btn_global_rect()
             panel_x = btn_rect.right() - self._stats_panel.width()
             panel_y = btn_rect.bottom() + 2
             self._stats_panel.move(panel_x, panel_y)
@@ -445,17 +452,36 @@ class ExpandedView(QFrame):
     # ── 标签筛选行 ────────────────────────────────────────
 
     def _make_tag_row(self) -> QWidget:
-        """创建标签筛选行（无标签时隐藏）"""
+        """创建标签筛选行（横向可滚动，无标签时隐藏）"""
         row = QWidget()
         row.setFixedHeight(32)
         row.setStyleSheet(f"""
             background: {AppTheme.C["bg_primary"]};
             border-bottom: 1px solid {AppTheme.C["border"]};
         """)
+
+        outer = QHBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._tag_scroll = QScrollArea()
+        self._tag_scroll.setWidgetResizable(True)
+        self._tag_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._tag_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._tag_scroll.setFixedHeight(32)
+        self._tag_scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }")
+
+        self._tag_container = QWidget()
+        self._tag_container.setStyleSheet("background: transparent;")
         self._tag_layout = QHBoxLayout()
         self._tag_layout.setContentsMargins(12, 2, 12, 2)
         self._tag_layout.setSpacing(6)
-        row.setLayout(self._tag_layout)
+        self._tag_container.setLayout(self._tag_layout)
+        self._tag_scroll.setWidget(self._tag_container)
+
+        outer.addWidget(self._tag_scroll)
+        row.setLayout(outer)
         row.hide()
         return row
 
@@ -484,7 +510,6 @@ class ExpandedView(QFrame):
         self._tag_layout.addWidget(_make_btn("全部", ""))
         for tag in tags:
             self._tag_layout.addWidget(_make_btn(f"#{tag}", tag))
-        self._tag_layout.addStretch(1)
         self._tag_row.show()
 
     # ── 搜索栏 ──────────────────────────────────────────────
@@ -505,7 +530,7 @@ class ExpandedView(QFrame):
     def _toggle_search(self) -> None:
         """切换搜索栏显示"""
         self._search_active = not self._search_active
-        self._search_bar.setVisible(self._search_active)
+        self._search_bar_row.setVisible(self._search_active)
         if self._search_active:
             self._search_bar.setFocus()
             self._search_bar.setText(self._search_query)
@@ -534,25 +559,51 @@ class ExpandedView(QFrame):
         self._add_input.setPlaceholderText("快速添加新待办...")
         self._add_input.returnPressed.connect(self._on_add_submit)
 
-        self._add_btn = QPushButton("＋")
+        self._add_btn = QPushButton()
         self._add_btn.setFixedSize(30, 30)
+        self._add_btn.setIconSize(QSize(16, 16))
+        self._add_btn.setIcon(AppIcons.get("add", 16, color=AppTheme.C["accent"], active_color="white"))
         self._add_btn.setToolTip("添加")
         self._add_btn.setStyleSheet(AppTheme.accent_fill_btn())
         self._add_btn.clicked.connect(self._on_add_submit)
 
         layout.addWidget(self._add_input)
         layout.addWidget(self._add_btn)
-
-        # 搜索栏（默认隐藏）
-        self._search_bar = QLineEdit()
-        self._search_bar.setPlaceholderText("搜索待办事项...")
-        self._search_bar.setVisible(False)
-        self._search_bar.setStyleSheet(AppTheme.search_bar_style())
-        self._search_bar.textChanged.connect(self._on_search_debounced)
-
-        layout.addWidget(self._search_bar)
         bar.setLayout(layout)
         return bar
+
+    def _make_search_bar(self) -> QWidget:
+        """搜索栏（独立一行，默认隐藏）"""
+        row = QWidget()
+        row.setFixedHeight(38)
+        row.setStyleSheet(f"""
+            background: {AppTheme.C["bg_card"]};
+            border-bottom: 1px solid {AppTheme.C["border"]};
+        """)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(12, 4, 12, 4)
+        layout.setSpacing(6)
+
+        self._search_bar = QLineEdit()
+        self._search_bar.setPlaceholderText("搜索待办事项...")
+        self._search_bar.setStyleSheet(AppTheme.search_bar_style())
+        self._search_bar.textChanged.connect(self._on_search_debounced)
+        self._search_bar.returnPressed.connect(self._toggle_search)
+
+        self._search_close_btn = QPushButton()
+        self._search_close_btn.setFixedSize(24, 24)
+        self._search_close_btn.setIconSize(QSize(14, 14))
+        self._search_close_btn.setIcon(AppIcons.get("delete", 14))
+        self._search_close_btn.setToolTip("关闭搜索")
+        self._search_close_btn.setStyleSheet(AppTheme.icon_btn())
+        self._search_close_btn.clicked.connect(self._toggle_search)
+
+        layout.addWidget(self._search_bar, stretch=1)
+        layout.addWidget(self._search_close_btn)
+        row.setLayout(layout)
+        row.hide()
+        return row
 
     def _on_add_submit(self) -> None:
         title = self._add_input.text().strip()
@@ -682,16 +733,32 @@ class ExpandedView(QFrame):
     # ── 状态显示 ──────────────────────────────────────────
 
     def _show_empty_state(self) -> None:
-        """显示空状态"""
-        label = QLabel("还没有待办事项\n点击上方 [＋] 快速添加第一条待办")
+        """显示空状态（含快捷添加按钮）"""
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        v = QVBoxLayout()
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(12)
+
+        label = QLabel("还没有待办事项")
         label.setAlignment(Qt.AlignCenter)
         label.setStyleSheet(f"""
             font: {AppTheme.FONT["body"]};
             color: {AppTheme.C["text_disabled"]};
-            padding: 40px 20px;
+            padding: 30px 20px 0 20px;
             background: transparent;
         """)
-        self._list_layout.insertWidget(0, label)
+
+        add_btn = QPushButton("＋ 立即添加第一条待办")
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.setStyleSheet(AppTheme.outline_btn())
+        add_btn.clicked.connect(self.focus_add_input)
+
+        v.addWidget(label)
+        v.addWidget(add_btn, alignment=Qt.AlignCenter)
+        v.addSpacing(20)
+        container.setLayout(v)
+        self._list_layout.insertWidget(0, container)
 
     def _show_no_results(self) -> None:
         """搜索无结果"""
@@ -762,7 +829,7 @@ class ExpandedView(QFrame):
                     self._stats_panel.mapToGlobal(QPoint(0, 0)),
                     self._stats_panel.size(),
                 )
-                btn_rect = self._title_bar.stats_btn_global_rect()
+                btn_rect = self._title_bar.more_btn_global_rect()
                 btn_rect.moveTopLeft(self.mapToGlobal(btn_rect.topLeft()))
                 if not panel_rect.contains(global_pos) and not btn_rect.contains(global_pos):
                     self._hide_stats_panel()
@@ -873,14 +940,11 @@ class ExpandedView(QFrame):
         layout.setContentsMargins(12, 0, 4, 0)
         layout.setSpacing(4)
 
-        self._archive_btn = QPushButton("📦 查看归档")
+        self._archive_btn = QPushButton("查看归档")
+        self._archive_btn.setIconSize(QSize(14, 14))
+        self._archive_btn.setIcon(AppIcons.get("archive", 14))
         self._archive_btn.setStyleSheet(AppTheme.text_link_btn())
         self._archive_btn.clicked.connect(self.signal_archive_view_requested.emit)
-
-        self._backup_btn = QPushButton("💾 备份")
-        self._backup_btn.setStyleSheet(AppTheme.text_link_btn())
-        self._backup_btn.setToolTip("导出 / 导入数据备份")
-        self._backup_btn.clicked.connect(self.signal_backup_clicked.emit)
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -892,11 +956,6 @@ class ExpandedView(QFrame):
             color: {AppTheme.C["text_secondary"]};
             background: transparent;
         """)
-
-        # 退出按钮
-        self._quit_btn = QPushButton("✕  退出")
-        self._quit_btn.setFixedHeight(26)
-        self._quit_btn.clicked.connect(self.signal_quit_requested.emit)
 
         # 缩放手柄（右下角三角图案）
         grip = QSizeGrip(footer)
@@ -915,10 +974,8 @@ class ExpandedView(QFrame):
         """)
 
         layout.addWidget(self._archive_btn)
-        layout.addWidget(self._backup_btn)
         layout.addWidget(spacer)
         layout.addWidget(self._stats_label)
-        layout.addWidget(self._quit_btn)
         layout.addWidget(grip)
         footer.setLayout(layout)
         return footer
@@ -926,7 +983,7 @@ class ExpandedView(QFrame):
     def update_stats(self, active_count: int, archived_count: int) -> None:
         """更新底部统计"""
         self._stats_label.setText(f"共 {active_count} 项")
-        self._archive_btn.setText(f"📦 查看归档 ({archived_count})")
+        self._archive_btn.setText(f"查看归档 ({archived_count})")
 
     def set_pinned(self, pinned: bool) -> None:
         """同步置顶按钮样式（由控制器调用）"""
@@ -957,7 +1014,16 @@ class ExpandedView(QFrame):
             border-bottom: 1px solid {C["border"]};
         """)
         self._add_btn.setStyleSheet(AppTheme.accent_fill_btn())
+        self._add_btn.setIcon(AppIcons.get("add", 16, color=C["accent"], active_color="white"))
+
+        # ── 搜索栏 ────────────────────────────────────────
+        self._search_bar_row.setStyleSheet(f"""
+            background: {C["bg_card"]};
+            border-bottom: 1px solid {C["border"]};
+        """)
         self._search_bar.setStyleSheet(AppTheme.search_bar_style())
+        self._search_close_btn.setStyleSheet(AppTheme.icon_btn())
+        self._search_close_btn.setIcon(AppIcons.get("delete", 14))
 
         # ── 页脚 ────────────────────────────────────────────
         self._footer.setStyleSheet(f"""
@@ -971,9 +1037,8 @@ class ExpandedView(QFrame):
             color: {C["text_secondary"]};
             background: transparent;
         """)
-        self._quit_btn.setStyleSheet(AppTheme.danger_fill_btn())
         self._archive_btn.setStyleSheet(AppTheme.text_link_btn())
-        self._backup_btn.setStyleSheet(AppTheme.text_link_btn())
+        self._archive_btn.setIcon(AppIcons.get("archive", 14))
 
         # ── 弹出面板 ────────────────────────────────────
         self._settings_panel.setStyleSheet(AppTheme.popup_panel_style())

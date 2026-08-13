@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PySide6.QtCore import Signal, Qt, QMimeData, QPoint, QRect, QEvent
+from PySide6.QtCore import Signal, Qt, QMimeData, QPoint, QRect, QEvent, QSize
 from PySide6.QtGui import QDrag, QMouseEvent
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 from app.config import AppConfig
 from app.views.theme import AppTheme
+from app.views.icons import AppIcons
 from app.views.elided_label import ElidedLabel
 from app.models.todo_item import TodoItem, ProgressEntry
 from app.views.progress_widget import ProgressWidget
@@ -54,6 +55,20 @@ class TodoCard(QFrame):
 
         self.setStyleSheet(AppTheme.card_style(completed=False))
 
+        # ── 外层布局：置顶竖条 + 内容区 ────────────────────
+        outer = QHBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # 置顶竖条（独立布局元素，与内容物理隔离，不随 hover 变化）
+        self._sticky_bar = QFrame()
+        self._sticky_bar.setFixedWidth(3)
+        self._sticky_bar.setStyleSheet(AppTheme.sticky_bar_style())
+        self._sticky_bar.setVisible(self._item.sticky)
+        outer.addWidget(self._sticky_bar)
+
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(10, 8, 10, 8)
         main_layout.setSpacing(4)
@@ -72,16 +87,19 @@ class TodoCard(QFrame):
         """)
         # ElidedLabel 已设置 Expanding + minimumWidth(0)
 
-        self._date_btn = QPushButton("📅")
+        self._date_btn = QPushButton()
         self._date_btn.setFixedSize(24, 24)
+        self._date_btn.setIconSize(QSize(16, 16))
+        self._date_btn.setIcon(AppIcons.get("calendar", 16))
         self._date_btn.setToolTip("设置截止日期")
-        self._date_btn.setStyleSheet(AppTheme.icon_btn("12px"))
+        self._date_btn.setStyleSheet(AppTheme.icon_btn())
         self._date_btn.clicked.connect(self._on_set_due_date)
 
-        self._sticky_btn = QPushButton("↑")
+        self._sticky_btn = QPushButton()
         self._sticky_btn.setFixedSize(24, 24)
+        self._sticky_btn.setIconSize(QSize(16, 16))
         self._sticky_btn.setToolTip("置顶")
-        self._sticky_btn.setStyleSheet(AppTheme.toggle_btn(False))
+        self._sticky_btn.setStyleSheet(AppTheme.icon_btn())
         self._sticky_btn.clicked.connect(self._on_toggle_sticky)
 
         self._complete_btn = QPushButton("办结")
@@ -90,8 +108,9 @@ class TodoCard(QFrame):
         self._complete_btn.setStyleSheet(AppTheme.outline_btn())
         self._complete_btn.clicked.connect(self._on_complete)
 
-        self._delete_btn = QPushButton("✕")
+        self._delete_btn = QPushButton()
         self._delete_btn.setFixedSize(24, 24)
+        self._delete_btn.setIconSize(QSize(16, 16))
         self._delete_btn.setToolTip("删除")
         self._delete_btn.setStyleSheet(AppTheme.danger_btn())
         self._delete_btn.clicked.connect(self._on_delete)
@@ -150,7 +169,10 @@ class TodoCard(QFrame):
         progress_row.addWidget(self._progress_btn)
         main_layout.addLayout(progress_row)
 
-        self.setLayout(main_layout)
+        content.setLayout(main_layout)
+        outer.addWidget(content, stretch=1)
+
+        self.setLayout(outer)
 
     def _populate(self, item: TodoItem) -> None:
         """用数据填充卡片"""
@@ -176,7 +198,13 @@ class TodoCard(QFrame):
         self.setToolTip(item.title)
 
         # 置顶状态
-        self._sticky_btn.setStyleSheet(AppTheme.toggle_btn(item.sticky))
+        self._apply_sticky_icon()
+        self._sticky_bar.setVisible(item.sticky)
+
+        # 操作按钮默认隐藏（办结按钮常驻），鼠标悬停卡片时显示
+        self._date_btn.setVisible(False)
+        self._sticky_btn.setVisible(False)
+        self._delete_btn.setVisible(False)
 
         # 截止日期徽标
         if item.due_date:
@@ -291,6 +319,21 @@ class TodoCard(QFrame):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._drag_start_pos = None
         super().mouseReleaseEvent(event)
+
+    def enterEvent(self, event) -> None:
+        """鼠标进入卡片：显示操作按钮"""
+        if not self._item.is_completed:
+            self._date_btn.setVisible(True)
+            self._sticky_btn.setVisible(True)
+        self._delete_btn.setVisible(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        """鼠标离开卡片：隐藏操作按钮"""
+        self._date_btn.setVisible(False)
+        self._sticky_btn.setVisible(False)
+        self._delete_btn.setVisible(False)
+        super().leaveEvent(event)
 
     def _start_drag(self, event) -> None:
         """启动拖拽"""
@@ -409,6 +452,19 @@ class TodoCard(QFrame):
 
     # ── 更新 ──────────────────────────────────────────────
 
+    def _apply_sticky_icon(self) -> None:
+        """按置顶状态刷新置顶按钮图标颜色"""
+        color = AppTheme.C["accent"] if self._item.sticky else AppTheme.C["text_disabled"]
+        self._sticky_btn.setIcon(AppIcons.get("pin", 16, color=color))
+
+    def _apply_action_icons(self) -> None:
+        """统一刷新操作按钮图标（主题/字号变化时调用）"""
+        C = AppTheme.C
+        self._date_btn.setIcon(AppIcons.get("calendar", 16))
+        self._delete_btn.setIcon(
+            AppIcons.get("delete", 16, color=C["text_disabled"], active_color=C["danger"]))
+        self._apply_sticky_icon()
+
     def update_item(self, item: TodoItem) -> None:
         """更新卡片显示（无重建）"""
         self._populate(item)
@@ -442,6 +498,10 @@ class TodoCard(QFrame):
         # 卡片背景
         self.setStyleSheet(AppTheme.card_style(completed=item.is_completed))
 
+        # 置顶竖条
+        self._sticky_bar.setStyleSheet(AppTheme.sticky_bar_style())
+        self._sticky_bar.setVisible(item.sticky)
+
         # 标题
         if item.is_completed:
             self._title_label.setStyleSheet(f"""
@@ -460,10 +520,11 @@ class TodoCard(QFrame):
             """)
 
         # 按钮样式
-        self._sticky_btn.setStyleSheet(AppTheme.toggle_btn(item.sticky))
         self._complete_btn.setStyleSheet(AppTheme.outline_btn())
         self._delete_btn.setStyleSheet(AppTheme.danger_btn())
-        self._date_btn.setStyleSheet(AppTheme.icon_btn("12px"))
+        self._date_btn.setStyleSheet(AppTheme.icon_btn())
+        self._sticky_btn.setStyleSheet(AppTheme.icon_btn())
+        self._apply_action_icons()
 
         # 进度输入区域
         self._progress_input.setStyleSheet(AppTheme.progress_input_style())
