@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, Signal, QPoint, QSize, QSettings, QTimer, QEvent
+from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, Signal, QPoint, QSize, QTimer, QEvent
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget, QApplication
 from PySide6.QtGui import QMouseEvent, QScreen, QCursor
 
@@ -286,12 +286,12 @@ class MainWindow(QWidget):
 
     def _save_position(self) -> None:
         """保存窗口位置到 QSettings"""
-        settings = QSettings("Personal", "待办事项和便签")
+        settings = AppConfig.settings()
         settings.setValue("window/pos", self.pos())
 
     def _restore_position(self) -> bool:
         """从 QSettings 恢复窗口位置，成功返回 True"""
-        settings = QSettings("Personal", "待办事项和便签")
+        settings = AppConfig.settings()
         pos = settings.value("window/pos")
         if pos is not None and isinstance(pos, QPoint):
             self.move(pos)
@@ -474,7 +474,7 @@ class MainWindow(QWidget):
 
     def closeEvent(self, event):
         if self._stuck_to_top:
-            settings = QSettings("Personal", "待办事项和便签")
+            settings = AppConfig.settings()
             settings.setValue("window/pos", self._restore_rect.topLeft())
             self._full_unstick()
         else:

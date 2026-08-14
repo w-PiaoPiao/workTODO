@@ -46,10 +46,6 @@ class ElidedLabel(QLabel):
         self._full_text = text
         self.update()  # 触发 paintEvent 重绘
 
-    def fullText(self) -> str:
-        """获取完整文本"""
-        return self._full_text
-
     def text(self) -> str:
         """覆盖 QLabel.text() 返回完整文本（方便外部访问/调试）"""
         return self._full_text

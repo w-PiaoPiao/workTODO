@@ -91,17 +91,6 @@ class ProgressWidget(QWidget):
         self._show_all = False
         self._refresh()
 
-    def add_entry(self, entry: ProgressEntry) -> None:
-        """追加一条新进度"""
-        self._entries.append(entry)
-        if self._show_all:
-            self._layout.insertWidget(
-                self._layout.count() - 1,
-                self._make_expanded_row(entry),
-            )
-        else:
-            self._refresh()
-
     def reapply_theme(self) -> None:
         """重新应用主题样式"""
         self._refresh()

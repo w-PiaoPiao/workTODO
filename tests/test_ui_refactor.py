@@ -137,6 +137,31 @@ class TestTodoCard:
         assert not c2._sticky_btn.icon().isNull()
 
 
+class TestArchiveDialog:
+    def test_search_matches_progress_text(self, app):
+        """归档搜索应覆盖进度文本（与主搜索一致）"""
+        from app.views.archive_dialog import ArchiveDialog
+        from app.models.todo_item import TodoItem, ProgressEntry
+
+        item = TodoItem(title="标题无关键词")
+        item.progress.append(ProgressEntry(text="关键进度词"))
+        d = ArchiveDialog([item])
+        d._on_search("关键进度词")
+        assert len(d._filtered_items) == 1
+        d._on_search("标题无")
+        assert len(d._filtered_items) == 1
+        d._on_search("不存在的词")
+        assert d._filtered_items == []
+        d._on_search("")
+        assert len(d._filtered_items) == 1
+
+    def test_search_empty_archive(self, app):
+        from app.views.archive_dialog import ArchiveDialog
+        d = ArchiveDialog([])
+        d._on_search("随便")
+        assert d._filtered_items == []
+
+
 class TestThemeService:
     def test_set_mode_persists(self, app):
         from app.services.theme_service import ThemeService

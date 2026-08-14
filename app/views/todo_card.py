@@ -404,33 +404,45 @@ class TodoCard(QFrame):
             return
         self._editing = False
 
+        app = QApplication.instance()
         new_title = self._edit_input.text().strip()
-        if new_title and new_title != self._item.title:
-            self._title_label.setFullText(new_title)
-            self.setToolTip(new_title)  # 同步卡片 tooltip（因 ElidedLabel 鼠标透传导致原生 tooltip 不可用）
-            self.signal_title_changed.emit(self._item.id, new_title)
-
-        # 保护：如果信号导致的 StoreError 已触发 _refresh_views 销毁了卡片，
-        # 后续的 widget 操作不再安全（会抛出 RuntimeError）
         try:
+            if new_title and new_title != self._item.title:
+                self._title_label.setFullText(new_title)
+                self.setToolTip(new_title)  # 同步卡片 tooltip（因 ElidedLabel 鼠标透传导致原生 tooltip 不可用）
+                self.signal_title_changed.emit(self._item.id, new_title)
+
             self._title_label.show()
             if self._edit_input:
                 self._edit_input.deleteLater()
-                self._edit_input = None
-            QApplication.instance().removeEventFilter(self)
         except RuntimeError:
-            # widget 已被 deleteLater 实际删除
+            # widget 已被 deleteLater 实际删除，后续对象操作不再安全
+            pass
+        finally:
             self._edit_input = None
+            # 无论成功/异常/卡片销毁，都必须移除全局事件过滤器，防止泄漏
+            try:
+                app.removeEventFilter(self)
+            except RuntimeError:
+                pass
 
     def eventFilter(self, obj, event) -> bool:
         """全局事件过滤器：点击编辑框外部时自动保存并退出编辑"""
-        if self._editing and event.type() == QEvent.MouseButtonPress:
-            edit_rect = QRect(
-                self._edit_input.mapToGlobal(QPoint(0, 0)),
-                self._edit_input.size(),
-            )
-            if not edit_rect.contains(event.globalPosition().toPoint()):
-                self._finish_edit()
+        try:
+            if self._editing and event.type() == QEvent.MouseButtonPress:
+                edit_rect = QRect(
+                    self._edit_input.mapToGlobal(QPoint(0, 0)),
+                    self._edit_input.size(),
+                )
+                if not edit_rect.contains(event.globalPosition().toPoint()):
+                    self._finish_edit()
+        except RuntimeError:
+            # 卡片已被销毁：清理过滤器并放行事件
+            try:
+                QApplication.instance().removeEventFilter(self)
+            except RuntimeError:
+                pass
+            return False
         return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event) -> None:

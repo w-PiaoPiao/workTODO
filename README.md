@@ -2,7 +2,7 @@
 
 > Windows 桌面悬浮待办事项软件 — 像便利贴一样悬浮在桌面，支持深色/浅色主题、进度追踪、卡片排序、截止日期提醒、彩色便签。
 
-![Python](https://img.shields.io/badge/Python-3.12-blue) ![PySide6](https://img.shields.io/badge/PySide6-6.11%2B-green) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey) ![Version](https://img.shields.io/badge/Version-0.4.2-orange)
+![Python](https://img.shields.io/badge/Python-3.12-blue) ![PySide6](https://img.shields.io/badge/PySide6-6.11%2B-green) ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey) ![Version](https://img.shields.io/badge/Version-0.4.4-orange)
 
 ---
 
@@ -25,7 +25,7 @@
 | 📅 **截止日期** | 设置截止日期，今天/明天/已过期徽标，到期托盘提醒 |
 | 🏷️ **分类标签** | 标题输入 `#标签` 自动识别，顶部标签筛选 |
 | 📝 **彩色便签** | 待办/便签双 Tab，5 色便利贴，多行笔记 |
-| 💾 **数据备份** | 一键导出全部数据为 JSON，随时导入恢复 |
+| 💾 **数据备份** | 一键导出全部数据（待办 + 归档 + 便签）为 JSON，随时导入恢复；导入前自动快照留底 |
 | 📊 **统计视图** | 今日/本周/累计完成数一目了然 |
 | 🔖 **窗口置顶** | 窗口置顶/取消一键切换，记忆首选项 |
 | 🖱️ **进度折叠** | 只显示最新一条进度，点击 ▼ 展开全部 |
@@ -80,6 +80,7 @@
 | 编程语言 | Python | 3.12+ |
 | GUI 框架 | PySide6 (Qt 6) | >= 6.11.1 |
 | 数据存储 | 本地 JSON 文件（原子写入防损坏） | — |
+| 图像处理 | Pillow（桌宠白底去除） | >= 10.2.0 |
 | 工具库 | appdirs | >= 1.4.4 |
 | 打包工具 | PyInstaller | >= 6.21 |
 
@@ -109,17 +110,14 @@ python main.py --debug
 
 ### 打包为独立 EXE
 
+推荐使用一键打包脚本（自动读取版本号、排除未使用的 Qt 模块以减小体积）：
+
 ```bash
-pip install pyinstaller>=6.21
+pip install -r requirements.txt -r requirements-dev.txt
+powershell -ExecutionPolicy Bypass -File tools\build.ps1
+```
 
-pyinstaller --onefile --windowed \
-    --name "待办事项和便签v0.4.0" \
-    --icon "app/resources/icon.ico" \
-    --add-data "app/resources;app/resources" \
-    --clean --noconfirm \
-    main.py
-
-产物位于 `dist/待办事项和便签v0.4.0.exe`（约 46 MB，含 PySide6 完整运行时）。
+产物位于 `dist/待办事项和便签v{版本号}.exe`（排除 WebEngine/Qml/Quick/3D 等未用模块后约 30 MB 以内，未排除前约 46 MB）。
 
 ## 📖 使用指南
 
@@ -170,6 +168,9 @@ pyinstaller --onefile --windowed \
 待办事项和便签/
 ├── main.py                       # 启动入口
 ├── requirements.txt              # 依赖清单
+├── requirements-dev.txt          # 开发/测试/打包依赖
+├── pyproject.toml                # ruff 静态检查配置
+├── .pre-commit-config.yaml       # pre-commit 钩子
 ├── CLAUDE.md                     # AI 项目工作指引
 ├── README.md                     # 本文件
 ├── run_hidden.bat                # 无窗口启动脚本
@@ -184,10 +185,16 @@ pyinstaller --onefile --windowed \
 │   ├── config.py                 # 应用配置常量
 │   ├── models/
 │   │   ├── todo_item.py          # 数据类（TodoItem / ProgressEntry）
-│   │   ├── todo_store.py         # JSON 文件读写（原子写入、缓存落盘）
-│   │   └── note.py               # 便签模型（Note / NoteStore）
+│   │   ├── todo_store.py         # 待办存储（原子写入、缓存落盘、备份导入）
+│   │   ├── note.py               # 便签模型（Note / NoteStore）
+│   │   └── json_io.py            # JSON 读写公共工具（原子写入/损坏恢复）
 │   ├── controllers/
 │   │   └── app_controller.py     # 控制器（信号连接、业务逻辑）
+│   ├── services/
+│   │   ├── tray_service.py       # 系统托盘
+│   │   ├── reminder_service.py   # 截止日期提醒
+│   │   ├── theme_service.py      # 主题三态管理
+│   │   └── autostart_service.py  # 开机自启
 │   └── views/
 │       ├── theme.py              # 主题/样式系统（通用按钮工厂）
 │       ├── main_window.py        # 主窗口（无边框、置顶、动画）
@@ -203,13 +210,15 @@ pyinstaller --onefile --windowed \
 │       ├── custom_tooltip.py     # 自定义 tooltip（跟随主题）
 │       └── archive_dialog.py     # 归档查看对话框
 ├── tools/
-│   └── make_icon.py              # 应用图标生成脚本
+│   ├── make_icon.py              # 应用图标生成脚本
+│   └── build.ps1                 # 一键打包脚本（排除未用 Qt 模块）
 ├── tests/                        # 自动化测试
 │   ├── test_todo_item.py         # 数据模型测试
-│   ├── test_todo_store.py        # 存储层测试
+│   ├── test_todo_store.py        # 存储层测试（含备份/导入）
 │   ├── test_note_store.py        # 便签存储测试
 │   ├── test_app_controller.py    # 控制器级测试（offscreen）
 │   ├── test_pet_view.py          # 桌宠视图测试（素材/去白底/动画/拖拽）
+│   ├── test_ui_refactor.py       # UI 组件测试（图标/标题栏/卡片/归档搜索）
 │   └── conftest.py               # 测试 fixtures
 └── data/                         # 运行时数据（自动创建）
 ```
@@ -237,11 +246,13 @@ pyinstaller --onefile --windowed \
 1. 先写入 `.tmp` 临时文件
 2. 通过 `Path.replace()` 原子替换原文件（NTFS 特性）
 3. 若检测到 JSON 损坏，自动备份为 `.bak` 并重建
+4. **导入备份前**自动把当前数据快照到 `data/backups/`（保留最近 7 份），导入出错可找回
 
 ## 📜 版本历史
 
 | 版本 | 日期 | 主要内容 |
 |------|------|----------|
+| v0.4.4 | 2026-08-14 | 全面优化：搜索索引/标签筛选刷新修复、备份含便签+导入前快照、自动归档托盘提示、统计口径修正、归档搜索含进度、代码去重与死代码清理、QSettings 收敛、ruff 静态检查、打包瘦身脚本 |
 | v0.4.2 | 2026-08-13 | 代码审查修复：备份菜单 QMenu/QAction 导入缺失崩溃、对话框拖拽与清空布局去重、单实例提示、设置面板自适应、提醒键清理、归档/恢复幂等，133 项测试 |
 | v0.4.1 | 2026-08-12 | 折叠模式改为桌宠形态：自定义图片形象（白底自动去除）、空闲动画（漂浮/呼吸/随机歪头跳跃/悬停弹跳）、计数角标、右键菜单、设置面板切换形象，15 项桌宠测试 |
 | v0.4.0 | 2026-07-31 | 截止日期+到期提醒、分类标签、彩色便签、数据备份导入、统计面板、主题跟随系统、字号缩放、防抖落盘、应用图标、83 项测试 |

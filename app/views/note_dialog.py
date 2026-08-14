@@ -96,9 +96,9 @@ class NoteDialog(DragMixin, QDialog):
         # ── 颜色选择行 ────────────────────────────────────
         color_label = QLabel("颜色")
         color_label.setStyleSheet(AppTheme.panel_label_style())
-        color_row = QHBoxLayout()
-        color_row.setSpacing(6)
-        color_row.addWidget(color_label)
+        self._color_row = QHBoxLayout()
+        self._color_row.setSpacing(6)
+        self._color_row.addWidget(color_label)
         for key in AppConfig.NOTE_COLORS:
             btn = QPushButton()
             btn.setFixedSize(20, 20)
@@ -106,9 +106,9 @@ class NoteDialog(DragMixin, QDialog):
             btn.setProperty("note_color_key", key)
             btn.setStyleSheet(AppTheme.note_color_btn(key, key == self._selected_color))
             btn.clicked.connect(lambda checked, k=key: self._select_color(k))
-            color_row.addWidget(btn)
-        color_row.addStretch(1)
-        content_layout.addLayout(color_row)
+            self._color_row.addWidget(btn)
+        self._color_row.addStretch(1)
+        content_layout.addLayout(self._color_row)
 
         # ── 按钮行 ────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -138,10 +138,8 @@ class NoteDialog(DragMixin, QDialog):
     def _select_color(self, color_key: str) -> None:
         """切换选中颜色并刷新按钮样式"""
         self._selected_color = color_key
-        content_layout = self.layout().itemAt(1).layout()
-        color_row = content_layout.itemAt(1).layout()  # 0=text_edit, 1=color_row
-        for i in range(color_row.count()):
-            btn = color_row.itemAt(i).widget()
+        for i in range(self._color_row.count()):
+            btn = self._color_row.itemAt(i).widget()
             if isinstance(btn, QPushButton) and btn.property("note_color_key"):
                 key = btn.property("note_color_key")
                 btn.setStyleSheet(AppTheme.note_color_btn(key, key == self._selected_color))

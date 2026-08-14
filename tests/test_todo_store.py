@@ -200,6 +200,16 @@ class TestTodoStore:
         assert stats["today_completed"] == 1
         assert stats["week_completed"] == 1
 
+    def test_stats_total_completed_excludes_no_completed_at(self, store):
+        """自动归档的未完成项（无 completed_at）不计入累计完成"""
+        item = TodoItem(title="自动归档项")
+        store.add_item(item)
+        store.archive_item(item)  # archive_item 不设置 completed_at
+        stats = store.get_stats()
+        assert stats["archived_count"] == 1
+        assert stats["total_completed"] == 0
+        assert stats["today_completed"] == 0
+
     # ── 导出 / 导入 ─────────────────────────────────────
 
     def test_export_and_import(self, store, tmp_path):
@@ -215,9 +225,10 @@ class TestTodoStore:
 
         # 新 store 导入
         new_store = TodoStore()
-        n_todos, n_archived = new_store.import_all(backup)
+        n_todos, n_archived, notes = new_store.import_all(backup)
         assert n_todos == 0
         assert n_archived == 1
+        assert notes is None  # 旧备份无 notes 键
         assert len(new_store.load_archived()) == 1
         assert new_store.load_archived()[0].tags == ["工作"]
 
@@ -227,7 +238,7 @@ class TestTodoStore:
         store.export_all(backup)
 
         new_store = TodoStore()
-        n_todos, _ = new_store.import_all(backup)
+        n_todos, _, _ = new_store.import_all(backup)
         assert n_todos == 1
         assert new_store.load_todos()[0].title == "活跃条目"
 
@@ -294,7 +305,7 @@ class TestTodoStore:
             ],
             "archived": [],
         }, ensure_ascii=False), encoding="utf-8")
-        n, _ = store.import_all(backup)
+        n, _, _ = store.import_all(backup)
         assert n == 2
         todos = store.load_todos()
         # 空标题跳过；position 归一化后 c（原 0）在前
@@ -302,3 +313,69 @@ class TestTodoStore:
         assert todos[0].status == "active"     # weird → active
         assert todos[0].due_date is None       # 非法日期 → None
         assert [t.position for t in todos] == [0, 1]
+
+    # ── 便签备份（导出/导入） ────────────────────────────
+
+    def test_export_includes_notes_roundtrip(self, store, tmp_path):
+        """导出含便签 → 导入可完整恢复"""
+        from app.models.note import Note
+        store.add_item(TodoItem(title="待办A"))
+        note = Note(content="一张便签", color="blue")
+
+        backup = tmp_path / "backup_notes.json"
+        stats = store.export_all(backup, notes=[note])
+        assert stats["todos"] == 1
+        assert stats["notes"] == 1
+
+        data = json.loads(backup.read_text("utf-8"))
+        assert data["notes"][0]["content"] == "一张便签"
+        assert data["notes"][0]["color"] == "blue"
+
+        new_store = TodoStore()
+        n_todos, n_archived, notes = new_store.import_all(backup)
+        assert n_todos == 1
+        assert n_archived == 0
+        assert notes is not None and len(notes) == 1
+        assert notes[0].content == "一张便签"
+        assert notes[0].color == "blue"
+
+    def test_import_without_notes_key_returns_none(self, store, tmp_path):
+        """旧格式备份（无 notes 键）→ 返回 None，调用方保留现有便签"""
+        backup = tmp_path / "old_format.json"
+        backup.write_text(json.dumps(
+            {"todos": [{"title": "旧待办"}], "archived": []},
+            ensure_ascii=False), encoding="utf-8")
+        n_todos, n_archived, notes = store.import_all(backup)
+        assert n_todos == 1
+        assert n_archived == 0
+        assert notes is None
+
+    def test_import_skips_invalid_notes(self, store, tmp_path):
+        """notes 字段中的非 dict 条目应跳过，不报错"""
+        backup = tmp_path / "dirty_notes.json"
+        backup.write_text(json.dumps({
+            "todos": [],
+            "archived": [],
+            "notes": [
+                {"content": "正常便签", "color": "green"},
+                42,
+                "字符串",
+                None,
+                {"content": "坏颜色", "color": "不存在色"},
+            ],
+        }, ensure_ascii=False), encoding="utf-8")
+        _, _, notes = store.import_all(backup)
+        assert notes is not None and len(notes) == 2
+        assert notes[0].content == "正常便签"
+        assert notes[1].color == "yellow"  # 非法颜色回退默认
+
+    def test_import_notes_wrong_type_returns_none(self, store, tmp_path):
+        """notes 字段不是列表 → 视为格式异常，返回 None 不覆盖"""
+        backup = tmp_path / "bad_notes.json"
+        backup.write_text(json.dumps({
+            "todos": [],
+            "archived": [],
+            "notes": {"content": "不是列表"},
+        }, ensure_ascii=False), encoding="utf-8")
+        _, _, notes = store.import_all(backup)
+        assert notes is None

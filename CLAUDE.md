@@ -25,7 +25,9 @@ Windows 桌面悬浮待办事项软件，支持快速记录、进度跟踪、办
 
 - Python 3.12 + PySide6
 - 数据持久化：本地 JSON 文件（原子写入防损坏）
-- 打包：PyInstaller
+- 图像处理：Pillow（桌宠白底去除）
+- 打包：PyInstaller（`tools/build.ps1`，含未用 Qt 模块排除）
+- 静态检查：ruff（`pyproject.toml`），pre-commit 钩子可选安装
 
 ## 启动方式
 
@@ -46,14 +48,30 @@ python main.py
 
 打包 EXE 时，文件名须附加 `config.py` 中 `AppConfig.APP_VERSION` 定义的版本号，格式为 `待办事项和便签v{版本号}.exe`。
 
+**推荐使用一键打包脚本**（自动读取版本号、排除未使用的 Qt 模块，产物更小）：
+
 ```bash
-# 示例：当前版本 0.4.0，产物为 待办事项和便签v0.4.0.exe
+powershell -ExecutionPolicy Bypass -File tools\build.ps1
+```
+
+等价的手动命令（示例：当前版本 0.4.4）：
+
+```bash
 pyinstaller --onefile --windowed \
-    --name "待办事项和便签v0.4.0" \
+    --name "待办事项和便签v0.4.4" \
     --icon "app/resources/icon.ico" \
     --add-data "app/resources;app/resources" \
+    --exclude-module PySide6.QtWebEngineCore \
+    --exclude-module PySide6.QtWebEngineWidgets \
+    --exclude-module PySide6.QtQml \
+    --exclude-module PySide6.QtQuick \
+    --exclude-module PySide6.QtMultimedia \
+    --exclude-module PySide6.Qt3DCore \
+    --exclude-module PySide6.QtNetwork \
     --clean --noconfirm \
     main.py
 ```
+
+注意：**必须保留 PySide6.QtSvg**（QSvgRenderer 渲染 SVG 图标依赖）。
 
 应用图标源文件为 `app/resources/icon.ico`，如需修改请运行 `python tools/make_icon.py` 重新生成。

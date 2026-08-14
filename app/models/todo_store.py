@@ -18,8 +18,9 @@ from pathlib import Path
 from typing import Optional
 
 from app.config import AppConfig
-from app.models.json_io import atomic_write_json, backup_corrupted
+from app.models.json_io import atomic_write_json, load_json_list
 from app.models.todo_item import TodoItem, StoreError, CST, _now_iso
+from app.models.note import Note
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +181,8 @@ class TodoStore:
             "total_count": len(todos),
             "today_completed": _completed_on(archived, today),
             "week_completed": _completed_on(archived, week_start),
-            "total_completed": len(archived),
+            # 累计完成只统计有完成时间的归档（自动归档的未完成项不计入）
+            "total_completed": sum(1 for t in archived if t.completed_at),
         }
 
     def auto_archive_old(self, days: int = 30) -> int:
@@ -227,8 +229,12 @@ class TodoStore:
 
     # ── 数据备份（导出/导入） ────────────────────────────
 
-    def export_all(self, path: Path) -> dict:
-        """导出全部数据（活跃 + 归档）到单个 JSON 文件，返回统计信息"""
+    def export_payload(self, notes: list | None = None) -> dict:
+        """构建完整导出数据（活跃 + 归档 + 可选便签）
+
+        notes 为 None 时不写入 "notes" 键（保持旧格式兼容）；
+        传入便签列表时写入 {"id", "content", "created_at", "updated_at", "color"}。
+        """
         data = {
             "app": AppConfig.APP_NAME,
             "version": AppConfig.APP_VERSION,
@@ -236,17 +242,32 @@ class TodoStore:
             "todos": [t.to_dict() for t in self.load_todos()],
             "archived": [t.to_dict() for t in self.load_archived()],
         }
+        if notes is not None:
+            data["notes"] = [n.to_dict() for n in notes]
+        return data
+
+    def export_all(self, path: Path, notes: list | None = None) -> dict:
+        """导出全部数据（活跃 + 归档 + 可选便签）到单个 JSON 文件，返回统计信息"""
+        data = self.export_payload(notes)
         try:
             atomic_write_json(path, data)
         except StoreError as e:
             raise StoreError(f"导出失败: {e}") from e
-        return {
+        stats = {
             "todos": len(data["todos"]),
             "archived": len(data["archived"]),
         }
+        if notes is not None:
+            stats["notes"] = len(data["notes"])
+        return stats
 
-    def import_all(self, path: Path) -> tuple[int, int]:
-        """从备份文件导入全部数据（替换现有数据并立即落盘），返回 (待办数, 归档数)"""
+    def import_all(self, path: Path) -> tuple[int, int, list | None]:
+        """从备份文件导入全部数据（替换现有待办与归档并立即落盘）
+
+        返回 (待办数, 归档数, 便签列表或 None)：
+        - 备份文件含 "notes" 键 → 解析为 Note 列表（跳过无效条目），调用方可选择恢复
+        - 备份文件不含 "notes" 键（旧格式）→ 返回 None，调用方应保留现有便签
+        """
         try:
             raw = path.read_text("utf-8")
             data = json.loads(raw)
@@ -267,11 +288,29 @@ class TodoStore:
 
         todos = _parse_items(data.get("todos", []))
         archived = _parse_items(data.get("archived", []))
+
+        # 便签：旧备份无 "notes" 键 → None（不覆盖现有便签）
+        notes: list | None = None
+        if "notes" in data:
+            notes = []
+            raw_notes = data.get("notes", [])
+            if not isinstance(raw_notes, list):
+                logger.warning("导入文件 notes 字段格式错误，忽略便签")
+                notes = None
+            else:
+                for entry in raw_notes:
+                    try:
+                        notes.append(Note.from_dict(entry))
+                    except (KeyError, TypeError, ValueError, AttributeError) as e:
+                        logger.warning("导入时跳过无效便签条目: %s", e)
+
         # 替换缓存并立即落盘
         self.save_todos(todos)
         self.save_archived(archived)
-        logger.info("导入完成：%d 条待办，%d 条归档", len(todos), len(archived))
-        return len(todos), len(archived)
+        logger.info("导入完成：%d 条待办，%d 条归档%s",
+                    len(todos), len(archived),
+                    f"，{len(notes)} 张便签" if notes is not None else "（旧格式，便签未变更）")
+        return len(todos), len(archived), notes
 
     @staticmethod
     def _sanitize_items(items: list[TodoItem]) -> list[TodoItem]:
@@ -296,26 +335,10 @@ class TodoStore:
     def _load_items(self, path: Path) -> list[TodoItem]:
         """从 JSON 文件加载待办列表
 
-        边界情况：
-        - 文件不存在 → 返回空列表
-        - JSON 解析错误 → 备份损坏文件，返回空列表
-        - 数据格式不对 → 跳过无效条目
+        文件解析/损坏备份由 json_io.load_json_list 统一处理，
+        此处只负责条目校验（无效条目跳过、空标题剔除、position 归一化）。
         """
-        if not path.exists():
-            return []
-
-        try:
-            raw = path.read_text("utf-8")
-            data = json.loads(raw)
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.warning("JSON 解析失败 (%s)，备份文件: %s", e, path)
-            backup_corrupted(path)
-            return []
-
-        if not isinstance(data, list):
-            logger.warning("数据格式错误，期望列表，实际 %s", type(data).__name__)
-            backup_corrupted(path)
-            return []
+        data = load_json_list(path)
 
         items = []
         for entry in data:

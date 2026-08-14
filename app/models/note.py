@@ -7,14 +7,13 @@ NoteStore：notes.json 的原子读写与 CRUD。
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
 from app.config import AppConfig
-from app.models.json_io import atomic_write_json, backup_corrupted
+from app.models.json_io import atomic_write_json, load_json_list
 from app.models.todo_item import CST, StoreError, _now_iso
 
 logger = logging.getLogger(__name__)
@@ -106,23 +105,8 @@ class NoteStore:
     # ── 内部实现 ──────────────────────────────────────────
 
     def _load_items(self) -> list[Note]:
-        """从 JSON 文件加载便签（损坏时备份并返回空列表）"""
-        path = self._notes_path
-        if not path.exists():
-            return []
-
-        try:
-            raw = path.read_text("utf-8")
-            data = json.loads(raw)
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            logger.warning("JSON 解析失败 (%s)，备份文件: %s", e, path)
-            backup_corrupted(path)
-            return []
-
-        if not isinstance(data, list):
-            logger.warning("数据格式错误，期望列表，实际 %s", type(data).__name__)
-            backup_corrupted(path)
-            return []
+        """从 JSON 文件加载便签（解析/损坏备份由 json_io 统一处理）"""
+        data = load_json_list(self._notes_path)
 
         notes = []
         for entry in data:

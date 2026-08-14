@@ -82,9 +82,23 @@ class ArchiveDialog(DragMixin, QDialog):
         self._scroll_area = QScrollArea()
         self._scroll_area.setWidgetResizable(True)
         self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll_area.setStyleSheet("QScrollArea { border: none; }")
+        # 框架显式透明：透出对话框根的主题化背景（避免派生调色板渲染黑底）
+        self._scroll_area.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }")
+        # 视口是列表区最终可见层：objectName + ID 选择器显式画对话框底色
+        # （透明 QSS 与派生调色板不可靠，会渲染成黑色）
+        vp = self._scroll_area.viewport()
+        vp.setObjectName("archiveListViewport")
+        vp.setStyleSheet(f"""
+            #archiveListViewport {{
+                background: {AppTheme.C["bg_card"]};
+            }}
+        """)
 
         self._list_widget = QWidget()
+        # 与 ExpandedView 相同：显式透明，避免 QSS 派生调色板的默认底色盖住主题背景
+        self._list_widget.setStyleSheet("background: transparent;")
+        self._list_widget.setAutoFillBackground(False)
         self._list_layout = QVBoxLayout()
         self._list_layout.setContentsMargins(12, 8, 12, 8)
         self._list_layout.setSpacing(6)
@@ -108,9 +122,11 @@ class ArchiveDialog(DragMixin, QDialog):
         if not q:
             self._filtered_items = self._all_items[:]
         else:
+            # 与主搜索一致：标题 + 进度文本
             self._filtered_items = [
                 i for i in self._all_items
                 if q in i.title.lower()
+                or any(q in p.text.lower() for p in i.progress)
             ]
         self._refresh()
 

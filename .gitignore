@@ -12,6 +12,12 @@ venv/
 
 # 运行时数据（但保留 data 目录结构）
 data/*.json
+data/backups/
+
+# 测试临时目录
+.pytest_cache/
+.pytest-tmp*/
+.pt*/
 
 # 打包
 *.exe

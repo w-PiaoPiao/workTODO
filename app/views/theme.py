@@ -306,26 +306,6 @@ class AppTheme:
             }}
         """
 
-    @classmethod
-    def pin_btn_style(cls, pinned: bool = True) -> str:
-        """置顶按钮样式（共用，避免跨视图重复）"""
-        C = cls.C
-        color = C["danger"] if pinned else C["text_disabled"]
-        hov_color = C["danger"] if pinned else C["text_secondary"]
-        return f"""
-            QPushButton {{
-                font-size: 13px;
-                color: {color};
-                border-radius: 4px;
-                padding: 2px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: {C["bg_hover"]};
-                color: {hov_color};
-            }}
-        """
-
     # ── 通用按钮样式工厂 ──────────────────────────────────
 
     @classmethod
@@ -400,24 +380,6 @@ class AppTheme:
             }}
             QPushButton:hover {{
                 color: {C["danger"]};
-            }}
-        """
-
-    @classmethod
-    def danger_fill_btn(cls) -> str:
-        """危险填充按钮（hover 变红底白字）"""
-        C = cls.C
-        return f"""
-            QPushButton {{
-                font: {cls.FONT["small"]};
-                color: {C["text_disabled"]};
-                border-radius: 4px;
-                padding: 2px 8px;
-                background: transparent;
-            }}
-            QPushButton:hover {{
-                background: {C["danger"]};
-                color: white;
             }}
         """
 

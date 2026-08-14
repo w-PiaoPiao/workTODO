@@ -159,8 +159,30 @@ class ExpandedView(QFrame):
         self._scroll_area = QScrollArea()
         self._scroll_area.setWidgetResizable(True)
         self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # 显式 QSS 背景：QSS 派生的控件调色板不跟随 AppTheme.apply_palette
+        # （滚动区/容器会渲染成默认色、黑色或陈旧主题色），必须显式指定并由
+        # reapply_theme 在主题切换时刷新
+        self._scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                background: {AppTheme.C["bg_primary"]};
+                border: none;
+            }}
+        """)
+        # 视口是列表区的最终可见层：必须显式画主题背景。
+        # 普通透明 QSS 与派生调色板在此不可靠（会渲染成默认色/黑色/陈旧色），
+        # 用 objectName + ID 选择器精确指定，并在 reapply_theme 刷新。
+        vp = self._scroll_area.viewport()
+        vp.setObjectName("todoListViewport")
+        vp.setStyleSheet(f"""
+            #todoListViewport {{
+                background: {AppTheme.C["bg_primary"]};
+            }}
+        """)
 
         self._list_container = QWidget()
+        # 容器显式透明 + 关闭 autoFill：让视口的主题化背景透出
+        self._list_container.setStyleSheet("background: transparent;")
+        self._list_container.setAutoFillBackground(False)
         self._list_layout = QVBoxLayout()
         self._list_layout.setContentsMargins(12, 8, 12, 8)
         self._list_layout.setSpacing(6)
@@ -1024,6 +1046,19 @@ class ExpandedView(QFrame):
         self._search_bar.setStyleSheet(AppTheme.search_bar_style())
         self._search_close_btn.setStyleSheet(AppTheme.icon_btn())
         self._search_close_btn.setIcon(AppIcons.get("delete", 14))
+
+        # ── 待办列表滚动区 ──────────────────────────────────
+        self._scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                background: {C["bg_primary"]};
+                border: none;
+            }}
+        """)
+        self._scroll_area.viewport().setStyleSheet(f"""
+            #todoListViewport {{
+                background: {C["bg_primary"]};
+            }}
+        """)
 
         # ── 页脚 ────────────────────────────────────────────
         self._footer.setStyleSheet(f"""

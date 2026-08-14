@@ -13,7 +13,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QTimer, QSettings
+from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import (
     QApplication, QMessageBox, QInputDialog,
     QFileDialog, QMenu,
@@ -46,9 +46,9 @@ class AppController(QObject):
         # ── 系统服务（主题服务先创建，在视图构建前设定主题色） ──
         self._theme = ThemeService()
 
-        app = QApplication.instance()
-        app.setStyleSheet(AppTheme.global_qss())
-        AppTheme.apply_palette(app)
+        # 注意：全局 QSS + palette 统一由 ThemeService.apply() 应用
+        # （见下方 _theme.apply()），此处不再重复设置
+        app = QApplication.instance()  # 供退出时强制落盘使用
 
         # ── 数据层 ────────────────────────────────────────
         self._store = TodoStore()
@@ -66,11 +66,13 @@ class AppController(QObject):
         self._tray = TrayService(self._window)
         self._autostart = AutostartService()
         self._reminder = ReminderService(self)
-        self._reminder.configure(lambda: self._todos, self._show_notification)
+        self._reminder.configure(
+            lambda: self._todos, self._show_notification,
+            self._tray.supports_messages)
 
         # ── 桌宠形象 ──────────────────────────────────────
         self._pets = discover_pets()
-        settings = QSettings("Personal", "待办事项和便签")
+        settings = AppConfig.settings()
         pet_id = settings.value("window/pet", "")
         self._pet_view.load_pet(pet_id)
         self._expanded_view.set_pets(self._pets, self._pet_view.pet_id())
@@ -127,9 +129,11 @@ class AppController(QObject):
 
     def _load_data(self) -> None:
         """加载数据并刷新视图"""
+        archived_count = 0
         try:
             # 自动归档超过 30 天的旧项目（随后立即落盘）
-            self._store.auto_archive_old(AppConfig.AUTO_ARCHIVE_DAYS)
+            archived_count = self._store.auto_archive_old(
+                AppConfig.AUTO_ARCHIVE_DAYS)
             self._store.flush()
 
             self._todos = self._store.load_todos()
@@ -143,6 +147,21 @@ class AppController(QObject):
             self._show_error(f"数据加载失败: {e}")
 
         self._refresh_views()
+
+        # 自动归档提示（每天最多一次，避免每次启动都打扰）
+        if archived_count > 0:
+            self._notify_auto_archive(archived_count)
+
+    def _notify_auto_archive(self, count: int) -> None:
+        """提示自动归档结果（每天最多一次）"""
+        today = datetime.now(CST).strftime("%Y-%m-%d")
+        settings = AppConfig.settings()
+        if settings.value("notify/auto_archive_date", "") == today:
+            return
+        settings.setValue("notify/auto_archive_date", today)
+        self._show_notification(
+            f"已自动归档 {count} 条超过 {AppConfig.AUTO_ARCHIVE_DAYS} 天的旧待办，"
+            "可在「查看归档」中找回")
 
     def _filtered_items(self) -> list[TodoItem]:
         """按搜索词 + 标签过滤活跃待办（视图展示的列表）"""
@@ -299,6 +318,9 @@ class AppController(QObject):
         try:
             self._store.add_item(item)  # add_item 会修改 item.position（原地）
             self._todos = self._store.load_todos()
+            # add_item 原地追加到缓存列表，load_todos() 返回同一对象（id 不变），
+            # 搜索索引不会自动重建 → 必须手动失效，否则新条目不进搜索结果
+            self._invalidate_search_index()
             self._schedule_save()
             self._refresh_views()
             self._show_notification(f"已添加：{title[:20]}")
@@ -436,7 +458,10 @@ class AppController(QObject):
             self._store.update_item(item)
             self._schedule_save()
             self._invalidate_search_index()
-            # 无需刷新视图，卡片已就地更新
+            # 卡片已就地更新，无需整页刷新；但标题中的 #标签 可能变化，
+            # 必须同步标签筛选行，否则新增/删除的标签不体现、筛选结果过期
+            self._expanded_view.update_tag_filters(
+                self._collect_tags(), self._active_tag)
             self._show_notification("已更新标题")
         except StoreError as e:
             item.title = old_title  # 回滚内存状态
@@ -553,7 +578,7 @@ class AppController(QObject):
         menu.exec(QCursor.pos())
 
     def _on_export_data(self) -> None:
-        """导出全部数据到 JSON 文件"""
+        """导出全部数据（待办 + 归档 + 便签）到 JSON 文件"""
         path, _ = QFileDialog.getSaveFileName(
             self._window,
             "导出数据备份",
@@ -563,14 +588,17 @@ class AppController(QObject):
         if not path:
             return
         try:
-            stats = self._store.export_all(Path(path))
-            self._show_notification(
-                f"已导出 {stats['todos']} 条待办、{stats['archived']} 条归档")
+            stats = self._store.export_all(
+                Path(path), notes=self._note_store.load_notes())
+            msg = f"已导出 {stats['todos']} 条待办、{stats['archived']} 条归档"
+            if "notes" in stats:
+                msg += f"、{stats['notes']} 张便签"
+            self._show_notification(msg)
         except StoreError as e:
             self._show_error(f"导出失败: {e}")
 
     def _on_import_data(self) -> None:
-        """从备份文件导入数据（替换现有待办与归档，便签不受影响）"""
+        """从备份文件导入数据（替换现有待办与归档；备份含便签时一并替换）"""
         path, _ = QFileDialog.getOpenFileName(
             self._window,
             "导入数据备份",
@@ -582,24 +610,58 @@ class AppController(QObject):
         reply = QMessageBox.question(
             self._window,
             "确认导入",
-            "导入将替换当前所有待办和归档数据，此操作不可撤销。\n是否继续？",
+            "导入将替换当前所有待办和归档数据，此操作不可撤销。\n"
+            "备份文件含便签时也会一并替换；旧格式备份不含便签，不会清除现有便签。\n"
+            "导入前会自动把当前数据快照到 data/backups。\n是否继续？",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
         try:
-            n_todos, n_archived = self._store.import_all(Path(path))
+            # 导入前自动快照：数据无价，先留底再覆盖
+            self._snapshot_before_import()
+            n_todos, n_archived, notes = self._store.import_all(Path(path))
             # 重新加载内存引用并刷新
             self._todos = self._store.load_todos()
             self._archived = self._store.load_archived()
+            if notes is not None:
+                self._note_store.save_notes(notes)
+                self._notes = self._note_store.load_notes()
+                self._refresh_notes()
             self._search_query = ""
             self._active_tag = ""
             self._refresh_views()
-            self._show_notification(
-                f"导入完成：{n_todos} 条待办、{n_archived} 条归档")
+            msg = f"导入完成：{n_todos} 条待办、{n_archived} 条归档"
+            if notes is not None:
+                msg += f"、{len(notes)} 张便签"
+            self._show_notification(msg)
         except StoreError as e:
             self._show_error(f"导入失败: {e}")
+
+    # ── 导入前快照 ──────────────────────────────────────────
+
+    def _snapshot_before_import(self) -> None:
+        """导入前把当前全部数据快照到 data/backups，保留最近 BACKUP_KEEP 份
+
+        快照失败不阻断导入（尽力而为，仅记日志）。
+        """
+        backup_dir = AppConfig.backup_dir()
+        try:
+            stamp = datetime.now(CST).strftime("%Y%m%d_%H%M%S")
+            self._store.export_all(
+                backup_dir / f"pre_import_{stamp}.json",
+                notes=self._note_store.load_notes(),
+            )
+            # 轮换：只保留最近 N 份
+            snapshots = sorted(backup_dir.glob("pre_import_*.json"))
+            for old in snapshots[:-AppConfig.BACKUP_KEEP]:
+                try:
+                    old.unlink()
+                except OSError as e:
+                    logger.warning("清理旧快照失败 %s: %s", old, e)
+        except Exception as e:
+            logger.warning("导入前快照失败（继续导入）: %s", e)
 
     # ── 便签 ──────────────────────────────────────────────
 
@@ -672,7 +734,7 @@ class AppController(QObject):
 
     def _restore_window_state(self) -> None:
         """恢复窗口置顶状态、透明度并同步按钮"""
-        settings = QSettings("Personal", "待办事项和便签")
+        settings = AppConfig.settings()
         self._pinned = settings.value("window/pinned", True, type=bool)
         self._sync_pin_state()
         opacity = settings.value(
@@ -685,7 +747,7 @@ class AppController(QObject):
         self._pinned = not self._pinned
         self._window.set_always_on_top(self._pinned)
         self._sync_pin_state()
-        settings = QSettings("Personal", "待办事项和便签")
+        settings = AppConfig.settings()
         settings.setValue("window/pinned", self._pinned)
 
     def _sync_pin_state(self) -> None:
@@ -698,14 +760,14 @@ class AppController(QObject):
     def _on_pet_selected(self, pet_id: str) -> None:
         """切换桌宠形象并持久化"""
         self._pet_view.load_pet(pet_id)
-        settings = QSettings("Personal", "待办事项和便签")
+        settings = AppConfig.settings()
         settings.setValue("window/pet", self._pet_view.pet_id())
         self._expanded_view.set_selected_pet(self._pet_view.pet_id())
         self._show_notification("已切换桌宠形象")
 
     def _on_pet_animation_toggled(self, enabled: bool) -> None:
         """桌宠空闲动画开关切换：持久化，恢复时若处于折叠态立即重启"""
-        settings = QSettings("Personal", "待办事项和便签")
+        settings = AppConfig.settings()
         settings.setValue("window/pet_animation", enabled)
         if enabled:
             self._window.start_collapsed_idle()
@@ -741,7 +803,7 @@ class AppController(QObject):
     def _on_opacity_committed(self, value: float) -> None:
         """透明度松手后持久化"""
         self._window.set_opacity(value)
-        settings = QSettings("Personal", "待办事项和便签")
+        settings = AppConfig.settings()
         settings.setValue("window/opacity", value)
 
     # ── 键盘快捷键 ──────────────────────────────────────

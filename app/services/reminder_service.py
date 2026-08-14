@@ -12,7 +12,7 @@ import logging
 from datetime import datetime
 from typing import Callable, Optional
 
-from PySide6.QtCore import QObject, QSettings, QTimer
+from PySide6.QtCore import QObject, QTimer
 
 from app.config import AppConfig
 from app.models.todo_item import CST, TodoItem, _parse_due_date
@@ -28,6 +28,7 @@ class ReminderService(QObject):
 
         self._todos_provider: Optional[Callable[[], list[TodoItem]]] = None
         self._notify: Optional[Callable[[str], None]] = None
+        self._supports_messages: Optional[Callable[[], bool]] = None
 
         self._timer = QTimer(self)
         self._timer.setInterval(AppConfig.DUE_REMIND_CHECK_MS)
@@ -35,18 +36,24 @@ class ReminderService(QObject):
         self._timer.start()
 
     def configure(self, todos_provider: Callable[[], list[TodoItem]],
-                  notify: Callable[[str], None]) -> None:
-        """注入数据源与通知回调（由控制器在启动时调用）"""
+                  notify: Callable[[str], None],
+                  supports_messages: Callable[[], bool] | None = None) -> None:
+        """注入数据源、通知回调与托盘支持探测（由控制器在启动时调用）"""
         self._todos_provider = todos_provider
         self._notify = notify
+        self._supports_messages = supports_messages
 
     def check(self) -> None:
         """检查到期/过期待办并发送提醒（每天每项只提醒一次）"""
         if not self._todos_provider or not self._notify:
             return
+        # 托盘不支持气泡通知时跳过（内部定时器每小时触发，不能只靠
+        # 控制器启动时的一次性判断，否则会做无意义的检查与注册表写入）
+        if self._supports_messages is not None and not self._supports_messages():
+            return
         today = datetime.now(CST).date()
         today_key = today.isoformat()
-        settings = QSettings("Personal", "待办事项和便签")
+        settings = AppConfig.settings()
         reminded = set((settings.value(f"reminders/{today_key}", "") or "").split(","))
 
         overdue: list[str] = []

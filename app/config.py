@@ -8,13 +8,21 @@ import os
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QSettings
+
 
 class AppConfig:
     """应用全局配置"""
 
     # 应用信息
     APP_NAME = "待办事项和便签"
-    APP_VERSION = "0.4.3"
+    APP_VERSION = "0.4.4"
+    APP_ORG = "Personal"
+
+    @classmethod
+    def settings(cls) -> QSettings:
+        """应用级 QSettings（统一组织/应用名，避免散落重复构造）"""
+        return QSettings(cls.APP_ORG, cls.APP_NAME)
 
     # ── 数据路径 ──────────────────────────────────────────────
     # 数据存储目录：优先使用环境变量覆盖，默认在用户数据目录下
@@ -35,6 +43,16 @@ class AppConfig:
     ARCHIVE_FILE = "archive.json"
     NOTES_FILE = "notes.json"
 
+    # ── 导入前快照 ──────────────────────────────────────────
+    BACKUP_KEEP = 7                 # 保留最近快照份数（超过的自动清理）
+
+    @classmethod
+    def backup_dir(cls) -> Path:
+        """导入前快照目录（确保目录存在）"""
+        path = cls.DATA_DIR / "backups"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     @classmethod
     def todos_path(cls) -> Path:
         """活跃待办文件路径（确保目录存在）"""
@@ -54,8 +72,6 @@ class AppConfig:
         return cls.DATA_DIR / cls.NOTES_FILE
 
     # ── 窗口尺寸与位置 ────────────────────────────────────────
-    COLLAPSED_WIDTH = 320
-    COLLAPSED_HEIGHT = 48
     EXPANDED_WIDTH = 400
     EXPANDED_HEIGHT = 520
     EXPANDED_MIN_WIDTH = 300
@@ -67,13 +83,11 @@ class AppConfig:
 
     # ── 行为选项 ──────────────────────────────────────────────
     AUTO_ARCHIVE_DAYS = 30      # 自动归档天数阈值
-    MAX_PROGRESS_COLLAPSED = 3  # 进度条折叠阈值
     SEARCH_DEBOUNCE_MS = 300    # 搜索防抖毫秒
     NOTIFICATION_DURATION_MS = 2000  # 通知显示时长
     SAVE_DEBOUNCE_MS = 500      # 数据落盘防抖毫秒
 
     # ── 截止日期提醒 ──────────────────────────────────────────
-    DUE_REMIND_HOUR = 9         # 每天检查截止日期提醒的时间（时）
     DUE_REMIND_CHECK_MS = 3600_000  # 运行期间提醒检查间隔（1 小时）
 
     # ── 窗口透明度 ──────────────────────────────────────────────

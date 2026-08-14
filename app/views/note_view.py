@@ -47,6 +47,12 @@ class NoteView(QWidget):
         self.reapply_theme()
 
     def _build_ui(self) -> None:
+        # 显式 QSS 背景（同 ExpandedView）：避免 QSS 派生调色板渲染默认/陈旧底色
+        self.setStyleSheet(f"""
+            NoteView {{
+                background: {AppTheme.C["bg_primary"]};
+            }}
+        """)
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
@@ -80,9 +86,23 @@ class NoteView(QWidget):
         self._scroll_area = QScrollArea()
         self._scroll_area.setWidgetResizable(True)
         self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll_area.setStyleSheet("QScrollArea { border: none; }")
+        # 框架显式透明：透出 NoteView 根的主题化背景（避免派生调色板渲染黑底）
+        self._scroll_area.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }")
+        # 视口是列表区最终可见层：objectName + ID 选择器显式画主题背景
+        # （透明 QSS 与派生调色板不可靠，会渲染成黑色）
+        vp = self._scroll_area.viewport()
+        vp.setObjectName("noteListViewport")
+        vp.setStyleSheet(f"""
+            #noteListViewport {{
+                background: {AppTheme.C["bg_primary"]};
+            }}
+        """)
 
         self._list_container = QWidget()
+        # 与 ExpandedView 相同：显式透明，避免 QSS 派生调色板的默认底色盖住主题背景
+        self._list_container.setStyleSheet("background: transparent;")
+        self._list_container.setAutoFillBackground(False)
         self._list_layout = QVBoxLayout()
         self._list_layout.setContentsMargins(12, 8, 12, 8)
         self._list_layout.setSpacing(8)
@@ -125,6 +145,16 @@ class NoteView(QWidget):
 
     def reapply_theme(self) -> None:
         """重新应用主题样式（主题/字号变化时重建）"""
+        self.setStyleSheet(f"""
+            NoteView {{
+                background: {AppTheme.C["bg_primary"]};
+            }}
+        """)
+        self._scroll_area.viewport().setStyleSheet(f"""
+            #noteListViewport {{
+                background: {AppTheme.C["bg_primary"]};
+            }}
+        """)
         self._count_label.setStyleSheet(AppTheme.note_meta_style())
         self._add_btn.setStyleSheet(AppTheme.accent_fill_btn("14px"))
         self.refresh(self._notes)

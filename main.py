@@ -32,21 +32,15 @@ def main():
     app.setQuitOnLastWindowClosed(False)
 
     # ── 应用图标（源码与打包模式均生效） ─────────────────
+    from pathlib import Path
     from PySide6.QtGui import QIcon
-    from pathlib import Path as _Path
+    from app.config import AppConfig
 
-    def _resource_path(name: str) -> str:
-        """定位资源文件（兼容 PyInstaller 打包后的临时解压目录）"""
-        if getattr(sys, "_MEIPASS", None):
-            return str(_Path(sys._MEIPASS) / name)
-        return str(_Path(__file__).resolve().parent / name)
-
-    _icon_path = _resource_path("app/resources/icon.ico")
-    if _Path(_icon_path).exists():
+    _icon_path = str(AppConfig.resource_path("app/resources/icon.ico"))
+    if Path(_icon_path).exists():
         app.setWindowIcon(QIcon(_icon_path))
 
     # ── 单实例锁（QLockFile：进程崩溃后自动释放，无残留问题） ─
-    from pathlib import Path
     from PySide6.QtCore import QLockFile
     from app.config import AppConfig
 

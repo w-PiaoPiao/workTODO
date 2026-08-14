@@ -31,7 +31,11 @@ def qapp():
 
 @pytest.fixture
 def ini_settings(monkeypatch, tmp_path):
-    """把指定模块内的 QSettings 重定向到临时 INI 文件"""
+    """把 QSettings 重定向到临时 INI 文件，不污染真实注册表
+
+    - app.config.QSettings：AppConfig.settings() 的出口（业务代码统一走这里）
+    - 各服务模块级 QSettings：autostart 等仍直接引用模块级名称（注册表路径）
+    """
     path = tmp_path / "settings.ini"
 
     def factory(*args, **kwargs):
@@ -39,8 +43,9 @@ def ini_settings(monkeypatch, tmp_path):
 
     def apply_for(module_name):
         module = importlib.import_module(module_name)
-        monkeypatch.setattr(module, "QSettings", factory)
+        monkeypatch.setattr(module, "QSettings", factory, raising=False)
 
+    monkeypatch.setattr("app.config.QSettings", factory)
     return apply_for
 
 
@@ -110,6 +115,28 @@ class TestReminderService:
         ini_settings("app.services.reminder_service")
         s = ReminderService()
         s.check()  # 未 configure 不应崩溃
+
+    def test_no_notify_when_messages_unsupported(self, qapp, ini_settings):
+        """托盘不支持气泡通知时，定时检查应直接跳过（不通知、不写提醒记录）"""
+        ini_settings("app.services.reminder_service")
+        s = ReminderService()
+        yesterday = (datetime.now(CST) - timedelta(days=1)).strftime("%Y-%m-%d")
+        todos = [TodoItem(title="过期任务", due_date=yesterday)]
+        notified = []
+        s.configure(lambda: todos, notified.append, lambda: False)
+        s.check()
+        assert notified == []
+
+    def test_notify_when_messages_supported(self, qapp, ini_settings):
+        """supports_messages 返回 True 时正常提醒"""
+        ini_settings("app.services.reminder_service")
+        s = ReminderService()
+        yesterday = (datetime.now(CST) - timedelta(days=1)).strftime("%Y-%m-%d")
+        todos = [TodoItem(title="过期任务", due_date=yesterday)]
+        notified = []
+        s.configure(lambda: todos, notified.append, lambda: True)
+        s.check()
+        assert len(notified) == 1
 
 
 class TestAutostartService:

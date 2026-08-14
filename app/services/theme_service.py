@@ -57,7 +57,7 @@ class ThemeService(QObject):
         AppTheme.switch_theme(dark)
 
         # 字号缩放偏好
-        settings = QSettings("Personal", "待办事项和便签")
+        settings = AppConfig.settings()
         font_scale = settings.value(
             SETTINGS_FONT_SCALE_KEY, AppConfig.FONT_SCALE_DEFAULT, type=float)
         if font_scale != AppConfig.FONT_SCALE_DEFAULT:
@@ -106,7 +106,7 @@ class ThemeService(QObject):
         if mode not in self.THEME_CYCLE or mode == self._theme_mode:
             return
         self._theme_mode = mode
-        settings = QSettings("Personal", "待办事项和便签")
+        settings = AppConfig.settings()
         settings.setValue(SETTINGS_MODE_KEY, self._theme_mode)
         settings.remove(SETTINGS_OLD_DARK_KEY)  # 清理旧版本键
         self.apply()
@@ -118,14 +118,14 @@ class ThemeService(QObject):
         app = QApplication.instance()
         app.setStyleSheet(AppTheme.global_qss())
         CustomTooltip.apply_theme_style()
-        QSettings("Personal", "待办事项和便签").setValue(
+        AppConfig.settings().setValue(
             SETTINGS_FONT_SCALE_KEY, scale)
 
     # ── 内部实现 ──────────────────────────────────────────
 
     def _load_mode(self) -> str:
         """从持久化存储加载主题模式（兼容旧版本布尔值）"""
-        settings = QSettings("Personal", "待办事项和便签")
+        settings = AppConfig.settings()
         mode = settings.value(SETTINGS_MODE_KEY, "")
         if not mode:
             old_dark = settings.value(SETTINGS_OLD_DARK_KEY, False, type=bool)

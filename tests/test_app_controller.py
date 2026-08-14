@@ -130,6 +130,32 @@ class TestControllerTodo:
         filtered = controller._filtered_items()
         assert len(filtered) == 1
 
+    def test_add_item_appears_in_active_search(self, controller):
+        """搜索状态下新增待办应立即进入搜索结果（搜索索引失效修复）"""
+        controller._on_add_item("旧任务")
+        controller._on_search("新")  # 当前无匹配
+        assert controller._filtered_items() == []
+        controller._on_add_item("新任务 #新")
+        filtered = controller._filtered_items()
+        assert any(t.title == "新任务 #新" for t in filtered)
+
+    def test_title_edit_refreshes_tag_filters(self, controller):
+        """标题内联编辑改变 #标签 后，标签筛选行应同步刷新"""
+        controller._on_add_item("工作项 #工作")
+        item = controller._todos[0]
+        controller._on_title_changed(item.id, "工作项 #生活")
+        assert controller._expanded_view._all_tags == ["生活"]
+
+    def test_title_edit_keeps_active_tag_filter(self, controller):
+        """按标签筛选时，编辑掉该标签的条目应从结果中消失"""
+        controller._on_add_item("工作项 #工作")
+        controller._on_add_item("其他项")
+        item = controller._todos[0]
+        controller._on_tag_filter_clicked("工作")
+        assert len(controller._filtered_items()) == 1
+        controller._on_title_changed(item.id, "改名 #生活")
+        assert controller._filtered_items() == []
+
 
 class TestControllerNotes:
     def test_add_note(self, controller):
@@ -188,6 +214,7 @@ class TestControllerBackup:
     def test_export_data(self, controller, monkeypatch, tmp_path):
         controller._on_add_item("待办A")
         controller._on_add_item("待办B")
+        controller._on_notes_added("备份便签", "yellow")
         backup_path = tmp_path / "backup.json"
 
         class _FakeFileDialog:
@@ -202,6 +229,9 @@ class TestControllerBackup:
         assert data["app"] == AppConfig.APP_NAME
         assert len(data["todos"]) == 2
         assert len(data["archived"]) == 0
+        # 便签必须包含在备份中
+        assert len(data["notes"]) == 1
+        assert data["notes"][0]["content"] == "备份便签"
 
     def test_import_data(self, controller, monkeypatch, tmp_path):
         backup_path = tmp_path / "backup.json"
@@ -227,9 +257,45 @@ class TestControllerBackup:
             "app.controllers.app_controller.QFileDialog", _FakeFileDialog)
         monkeypatch.setattr(
             "app.controllers.app_controller.QMessageBox", _FakeMsgBox)
+        # 导入前先有一张便签（旧格式备份无 notes 键 → 便签应保留）
+        controller._on_notes_added("现有便签", "pink")
         controller._on_import_data()
         assert len(controller._todos) == 1
         assert controller._todos[0].title == "导入的待办"
+        assert len(controller._notes) == 1
+        assert controller._notes[0].content == "现有便签"
+
+    def test_import_data_with_notes(self, controller, monkeypatch, tmp_path):
+        """新版备份含便签 → 导入后替换便签"""
+        backup_path = tmp_path / "backup2.json"
+        backup = {
+            "app": AppConfig.APP_NAME,
+            "version": "0.4.4",
+            "exported_at": "2026-08-14T00:00:00+08:00",
+            "todos": [],
+            "archived": [],
+            "notes": [{"content": "导入的便签", "color": "blue"}],
+        }
+        backup_path.write_text(json.dumps(backup, ensure_ascii=False), "utf-8")
+
+        class _FakeFileDialog:
+            getOpenFileName = staticmethod(
+                lambda *a, **k: (str(backup_path), ""))
+
+        class _FakeMsgBox:
+            Yes = QMessageBox.Yes
+            No = QMessageBox.No
+            question = staticmethod(lambda *a, **k: _FakeMsgBox.Yes)
+
+        monkeypatch.setattr(
+            "app.controllers.app_controller.QFileDialog", _FakeFileDialog)
+        monkeypatch.setattr(
+            "app.controllers.app_controller.QMessageBox", _FakeMsgBox)
+        controller._on_notes_added("将被替换的便签", "yellow")
+        controller._on_import_data()
+        assert len(controller._notes) == 1
+        assert controller._notes[0].content == "导入的便签"
+        assert controller._notes[0].color == "blue"
 
 
 class TestControllerReminders:
@@ -253,6 +319,57 @@ class TestControllerReminders:
         controller._on_add_item("今天到期")
         controller._todos[0].due_date = today
         controller._check_due_reminders()  # 不抛错即通过
+
+
+class TestAutoArchiveNotify:
+    def test_notifies_once_per_day(self, app, tmp_path, monkeypatch):
+        """启动自动归档后应提示一次；同一天再次启动不重复提示"""
+        from PySide6.QtCore import QSettings as QtQSettings
+        from app.controllers.app_controller import AppController
+
+        monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
+        # QSettings 重定向到临时 INI（notify/auto_archive_date 键）
+        ini = tmp_path / "settings.ini"
+        monkeypatch.setattr(
+            "app.config.QSettings",
+            lambda *a, **k: QtQSettings(str(ini), QtQSettings.IniFormat))
+        _clean_settings()
+
+        notified = []
+        monkeypatch.setattr(
+            "app.models.todo_store.TodoStore.auto_archive_old",
+            lambda self, days=30: 2)
+        monkeypatch.setattr(
+            "app.services.tray_service.TrayService.supports_messages",
+            lambda self: True)
+        monkeypatch.setattr(
+            "app.services.tray_service.TrayService.show_notification",
+            lambda self, message: notified.append(message))
+
+        c1 = AppController()
+        try:
+            # 只统计归档通知（window.close() 会额外触发"已最小化"通知）
+            assert sum("已自动归档" in m for m in notified) == 1
+            assert "已自动归档 2 条" in notified[0]
+        finally:
+            try:
+                app.aboutToQuit.disconnect(c1._flush_store)
+            except (RuntimeError, TypeError):
+                pass
+            c1._window.close()
+            c1._window.deleteLater()
+
+        # 同一天第二次启动：不再提示
+        c2 = AppController()
+        try:
+            assert sum("已自动归档" in m for m in notified) == 1
+        finally:
+            try:
+                app.aboutToQuit.disconnect(c2._flush_store)
+            except (RuntimeError, TypeError):
+                pass
+            c2._window.close()
+            c2._window.deleteLater()
 
 
 class TestThemeAndExtras:
