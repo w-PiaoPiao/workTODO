@@ -9,10 +9,11 @@
 
 from __future__ import annotations
 
-from typing import Callable, Generator
+from collections.abc import Callable, Generator
 
-from PySide6.QtCore import QPoint, QEvent, Signal, QObject
+from PySide6.QtCore import QEvent, QObject, QPoint, Signal
 from PySide6.QtWidgets import QFrame, QScrollArea, QVBoxLayout
+
 from app.views.theme import AppTheme
 
 

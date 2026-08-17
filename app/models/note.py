@@ -10,11 +10,10 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
 
 from app.config import AppConfig
 from app.models.json_io import atomic_write_json, load_json_list
-from app.models.todo_item import CST, StoreError, _now_iso
+from app.models.todo_item import StoreError, _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +37,7 @@ class Note:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Note":
+    def from_dict(cls, data: dict) -> Note:
         color = data.get("color", "yellow")
         if color not in AppConfig.NOTE_COLORS:
             color = "yellow"
@@ -64,7 +63,7 @@ class NoteStore:
 
     def __init__(self):
         self._notes_path = AppConfig.notes_path()
-        self._notes: Optional[list[Note]] = None  # 惰性缓存
+        self._notes: list[Note] | None = None  # 惰性缓存
 
     def load_notes(self) -> list[Note]:
         """加载便签列表（带缓存）"""

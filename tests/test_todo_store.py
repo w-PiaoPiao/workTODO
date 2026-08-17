@@ -1,10 +1,10 @@
 """测试数据存储层：CRUD、归档、损坏恢复、原子写入"""
 
 import json
-import pytest
-from pathlib import Path
 
-from app.models.todo_item import TodoItem, ProgressEntry, StoreError
+import pytest
+
+from app.models.todo_item import ProgressEntry, StoreError, TodoItem
 from app.models.todo_store import TodoStore
 
 
@@ -145,7 +145,7 @@ class TestTodoStore:
 
     def test_auto_archive_old(self, store):
         """测试自动归档：由于时间依赖，只验证接口正确性"""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
         cst = timezone(timedelta(hours=8), "CST")
         old = datetime.now(cst) - timedelta(days=60)
 
@@ -187,7 +187,7 @@ class TestTodoStore:
     # ── 统计 ────────────────────────────────────────────
 
     def test_get_stats_completed(self, store):
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
         cst = timezone(timedelta(hours=8), "CST")
         item = TodoItem(title="已完成")
         item.completed_at = datetime.now(cst).isoformat(timespec="seconds")

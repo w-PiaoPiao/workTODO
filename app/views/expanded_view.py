@@ -11,21 +11,43 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Qt, QTimer, QEvent, QPoint, QRect, QPropertyAnimation, QEasingCurve, QSize
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QScrollArea, QFrame, QSizePolicy, QSizeGrip, QApplication, QSlider,
-    QStackedWidget, QTabBar,
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QPoint,
+    QPropertyAnimation,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
 )
 from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QScrollArea,
+    QSizeGrip,
+    QSizePolicy,
+    QSlider,
+    QStackedWidget,
+    QTabBar,
+    QVBoxLayout,
+    QWidget,
+)
+
 from app.config import AppConfig
-from app.views.theme import AppTheme
-from app.views.icons import AppIcons
 from app.models.todo_item import TodoItem
-from app.views.todo_card import TodoCard
-from app.views.title_bar import TitleBar
 from app.views.drag_drop_manager import DragDropManager
+from app.views.icons import AppIcons
 from app.views.note_view import NoteView
+from app.views.theme import AppTheme
+from app.views.title_bar import TitleBar
+from app.views.todo_card import TodoCard
 from app.views.ui_utils import clear_layout
 
 
@@ -408,7 +430,7 @@ class ExpandedView(QFrame):
             self._hide_settings_panel()
             return
 
-        btn_rect = self._title_bar.settings_btn_global_rect()
+        btn_rect = self._title_bar.settings_btn_rect()
         panel_x = btn_rect.right() - self._settings_panel.width()
         panel_y = btn_rect.bottom() + 2
         self._settings_panel.move(panel_x, panel_y)
@@ -452,11 +474,11 @@ class ExpandedView(QFrame):
             f"累计完成 {stats['total_completed']} 项",
             f"归档 {stats['archived_count']} 条",
         ]
-        for label, text in zip(self._stats_labels, lines):
+        for label, text in zip(self._stats_labels, lines, strict=False):
             label.setText(text)
 
         if not self._stats_panel.isVisible():
-            btn_rect = self._title_bar.more_btn_global_rect()
+            btn_rect = self._title_bar.more_btn_rect()
             panel_x = btn_rect.right() - self._stats_panel.width()
             panel_y = btn_rect.bottom() + 2
             self._stats_panel.move(panel_x, panel_y)
@@ -710,6 +732,10 @@ class ExpandedView(QFrame):
             if id_ not in shown_ids:
                 if self._progress_expanded_card_id == id_:
                     self._progress_expanded_card_id = None
+                # 先从布局移除再销毁，避免 deleteLater 生效前残留/闪烁
+                idx = self._list_layout.indexOf(card)
+                if idx >= 0:
+                    self._list_layout.takeAt(idx)
                 card.deleteLater()
                 del self._card_map[id_]
 
@@ -842,7 +868,7 @@ class ExpandedView(QFrame):
                     self._settings_panel.mapToGlobal(QPoint(0, 0)),
                     self._settings_panel.size(),
                 )
-                btn_rect = self._title_bar.settings_btn_global_rect()
+                btn_rect = self._title_bar.settings_btn_rect()
                 btn_rect.moveTopLeft(self.mapToGlobal(btn_rect.topLeft()))
                 if not panel_rect.contains(global_pos) and not btn_rect.contains(global_pos):
                     self._hide_settings_panel()
@@ -851,7 +877,7 @@ class ExpandedView(QFrame):
                     self._stats_panel.mapToGlobal(QPoint(0, 0)),
                     self._stats_panel.size(),
                 )
-                btn_rect = self._title_bar.more_btn_global_rect()
+                btn_rect = self._title_bar.more_btn_rect()
                 btn_rect.moveTopLeft(self.mapToGlobal(btn_rect.topLeft()))
                 if not panel_rect.contains(global_pos) and not btn_rect.contains(global_pos):
                     self._hide_stats_panel()
@@ -891,11 +917,8 @@ class ExpandedView(QFrame):
     # ── 卡片查找 ────────────────────────────────────────
 
     def _find_card(self, item_id: str):
-        """按 item_id 查找卡片 widget"""
-        for w in self._iter_cards():
-            if w.property("todo_item_id") == item_id:
-                return w
-        return None
+        """按 item_id 查找卡片 widget（_card_map 为 id → 卡片 的 O(1) 映射）"""
+        return self._card_map.get(item_id)
 
     # ── 置顶动画 ────────────────────────────────────────
 

@@ -8,11 +8,12 @@ ExpandedView 顶部的标题栏，包含应用标题、高频按钮与「⋯」�
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, QPoint, QRect, QSize
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QMenu
+from PySide6.QtCore import QPoint, QRect, QSize, Signal
 from PySide6.QtGui import QAction, QActionGroup
-from app.views.theme import AppTheme
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QWidget
+
 from app.views.icons import AppIcons
+from app.views.theme import AppTheme
 
 
 class TitleBar(QWidget):
@@ -155,12 +156,12 @@ class TitleBar(QWidget):
     def set_collapse_cards_state(self, all_collapsed: bool) -> None:
         self._all_collapsed = all_collapsed
 
-    def settings_btn_global_rect(self) -> QRect:
+    def settings_btn_rect(self) -> QRect:
         """返回设置按钮在父窗口坐标系中的区域（设置面板锚定）"""
         tl = self._settings_btn.mapTo(self.parent(), QPoint(0, 0))
         return QRect(tl, self._settings_btn.size())
 
-    def more_btn_global_rect(self) -> QRect:
+    def more_btn_rect(self) -> QRect:
         """返回 ⋯ 按钮在父窗口坐标系中的区域（统计面板锚定）"""
         tl = self._more_btn.mapTo(self.parent(), QPoint(0, 0))
         return QRect(tl, self._more_btn.size())

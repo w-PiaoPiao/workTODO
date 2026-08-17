@@ -13,19 +13,27 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PySide6.QtCore import Signal, Qt, QMimeData, QPoint, QRect, QEvent, QSize
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QDrag, QMouseEvent
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLineEdit, QWidget, QApplication, QGraphicsOpacityEffect,
-    QInputDialog, QMessageBox, QLabel,
+    QApplication,
+    QFrame,
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
-from app.config import AppConfig
-from app.views.theme import AppTheme
-from app.views.icons import AppIcons
+
+from app.models.todo_item import TodoItem
 from app.views.elided_label import ElidedLabel
-from app.models.todo_item import TodoItem, ProgressEntry
+from app.views.icons import AppIcons
 from app.views.progress_widget import ProgressWidget
+from app.views.theme import AppTheme
 
 
 class TodoCard(QFrame):

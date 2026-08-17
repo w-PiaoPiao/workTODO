@@ -6,16 +6,25 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Qt, QPoint
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QScrollArea, QWidget, QFrame, QSizePolicy,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
+
 from app.config import AppConfig
+from app.models.todo_item import TodoItem
+from app.views.elided_label import ElidedLabel
 from app.views.theme import AppTheme
 from app.views.ui_utils import DragMixin, clear_layout
-from app.views.elided_label import ElidedLabel
-from app.models.todo_item import TodoItem
 
 
 class ArchiveDialog(DragMixin, QDialog):
@@ -28,6 +37,11 @@ class ArchiveDialog(DragMixin, QDialog):
         self._all_items = items
         self._filtered_items = items[:]
         self._drag_pos = QPoint()  # 拖拽用
+
+        # 搜索防抖（与主搜索一致），避免每次按键都全量重建列表
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.timeout.connect(self._flush_search)
 
         self.setWindowTitle("归档记录")
         self.setFixedSize(420, 480)
@@ -75,7 +89,7 @@ class ArchiveDialog(DragMixin, QDialog):
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("搜索归档记录...")
         self._search_input.setStyleSheet(AppTheme.dialog_input_style())
-        self._search_input.textChanged.connect(self._on_search)
+        self._search_input.textChanged.connect(self._on_search_debounced)
         layout.addWidget(self._search_input)
 
         # ── 列表区域 ──────────────────────────────────────
@@ -116,6 +130,14 @@ class ArchiveDialog(DragMixin, QDialog):
         layout.addWidget(self._footer_label)
 
         self.setLayout(layout)
+
+    def _on_search_debounced(self, text: str) -> None:
+        """搜索输入防抖：重启单次 timer，松手/停顿后才真正过滤"""
+        self._search_timer.start(AppConfig.SEARCH_DEBOUNCE_MS)
+
+    def _flush_search(self) -> None:
+        """防抖到期后执行过滤刷新"""
+        self._on_search(self._search_input.text())
 
     def _on_search(self, text: str) -> None:
         q = text.lower().strip()

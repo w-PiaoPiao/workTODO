@@ -6,8 +6,8 @@
     python main.py --debug  # 调试模式（输出详细日志）
 """
 
-import sys
 import logging
+import sys
 
 
 def main():
@@ -24,7 +24,6 @@ def main():
 
     # ── 启动 Qt 应用 ──────────────────────────────────────
     from PySide6.QtWidgets import QApplication
-    from PySide6.QtCore import Qt
 
     app = QApplication(sys.argv)
     app.setApplicationName("待办事项和便签")
@@ -33,7 +32,9 @@ def main():
 
     # ── 应用图标（源码与打包模式均生效） ─────────────────
     from pathlib import Path
+
     from PySide6.QtGui import QIcon
+
     from app.config import AppConfig
 
     _icon_path = str(AppConfig.resource_path("app/resources/icon.ico"))
@@ -42,6 +43,7 @@ def main():
 
     # ── 单实例锁（QLockFile：进程崩溃后自动释放，无残留问题） ─
     from PySide6.QtCore import QLockFile
+
     from app.config import AppConfig
 
     _lock_file_path = AppConfig.DATA_DIR / "instance.lock"
@@ -78,7 +80,9 @@ def main():
     # ── 启动控制器 ────────────────────────────────────────
     from app.controllers.app_controller import AppController
 
-    controller = AppController()
+    # 必须把控制器实例保存在 main() 作用域（或挂到 app 上），
+    # 否则 QObject 对象会因失去 Python 引用而被回收，应用直接退出。
+    _ = AppController()
 
     sys.exit(app.exec())
 

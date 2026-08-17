@@ -16,14 +16,31 @@ import random
 from pathlib import Path
 
 from PySide6.QtCore import (
-    Property, QAbstractAnimation, QEvent, QEasingCurve, QPoint,
-    QPropertyAnimation, QSequentialAnimationGroup, QSize, Qt, QTimer, Signal,
+    Property,
+    QAbstractAnimation,
+    QEasingCurve,
+    QEvent,
+    QPoint,
+    QPropertyAnimation,
+    QSequentialAnimationGroup,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
 )
 from PySide6.QtGui import (
-    QAction, QMouseEvent, QMovie, QPainter, QPixmap,
+    QAction,
+    QMouseEvent,
+    QMovie,
+    QPainter,
+    QPixmap,
 )
 from PySide6.QtWidgets import (
-    QLabel, QMenu, QSizePolicy, QVBoxLayout, QWidget,
+    QLabel,
+    QMenu,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
 
 from app.config import AppConfig
@@ -392,8 +409,6 @@ class PetView(QWidget):
 
     # ── 动画总开关 ──────────────────────────────────────────
 
-    # ── 动画总开关 ──────────────────────────────────────────
-
     def set_animation_enabled(self, enabled: bool) -> None:
         """设置空闲动画开关（由控制器恢复持久化状态 / 菜单切换时调用）"""
         self._animations_enabled = enabled
@@ -433,14 +448,21 @@ class PetView(QWidget):
         """当前生效的形象 id（素材缺失时回退到第一个可用素材）"""
         return self._pet_id or ""
 
-    def load_pet(self, pet_id: str | None) -> None:
-        """加载指定桌宠形象；失败或缺失时尝试第一个可用素材"""
+    def load_pet(self, pet_id: str | None,
+                 pets: list[dict] | None = None) -> None:
+        """加载指定桌宠形象；失败或缺失时尝试第一个可用素材
+
+        pets：可传入已扫描的素材列表（AppController 启动时已扫描一次），
+        避免每次加载都重新遍历磁盘目录。
+        """
         if not pet_id:
             pet_id = ""
         self._pet_id = pet_id
         self._clear_movie()
 
-        pets = {p["id"]: p for p in discover_pets()}
+        if pets is None:
+            pets = discover_pets()
+        pets = {p["id"]: p for p in pets}
         if pet_id not in pets:
             # 兜底：用户选中素材已被删除 → 使用第一个可用素材
             pet_id = next(iter(pets), "") if pets else ""

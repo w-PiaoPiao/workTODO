@@ -6,15 +6,22 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QTextEdit, QWidget, QSizePolicy,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
+
 from app.config import AppConfig
+from app.models.note import Note
 from app.views.theme import AppTheme
 from app.views.ui_utils import DragMixin
-from app.models.note import Note
 
 
 class NoteDialog(DragMixin, QDialog):
@@ -78,19 +85,16 @@ class NoteDialog(DragMixin, QDialog):
         self._text_edit = QTextEdit()
         self._text_edit.setPlaceholderText("在这里记录便签内容...")
         self._text_edit.setFixedHeight(150)
-        self._text_edit.setStyleSheet("""
-            QTextEdit {
-                border: 1px solid %s;
+        self._text_edit.setStyleSheet(f"""
+            QTextEdit {{
+                border: 1px solid {AppTheme.C["border"]};
                 border-radius: 4px;
                 padding: 6px;
-                background: %s;
-                color: %s;
-            }
-            QTextEdit:focus { border-color: %s; }
-        """ % (
-            AppTheme.C["border"], AppTheme.C["bg_card"],
-            AppTheme.C["text_primary"], AppTheme.C["accent"],
-        ))
+                background: {AppTheme.C["bg_card"]};
+                color: {AppTheme.C["text_primary"]};
+            }}
+            QTextEdit:focus {{ border-color: {AppTheme.C["accent"]}; }}
+        """)
         content_layout.addWidget(self._text_edit)
 
         # ── 颜色选择行 ────────────────────────────────────

@@ -14,25 +14,28 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer
+from PySide6.QtGui import QAction, QCursor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QMessageBox, QInputDialog,
-    QFileDialog, QMenu,
+    QApplication,
+    QFileDialog,
+    QInputDialog,
+    QMenu,
+    QMessageBox,
 )
-from PySide6.QtGui import QShortcut, QKeySequence, QCursor, QAction
 
 from app.config import AppConfig
-from app.models.todo_item import TodoItem, ProgressEntry, StoreError, CST
-from app.models.todo_store import TodoStore
 from app.models.note import Note, NoteStore
-from app.views.theme import AppTheme
-from app.views.main_window import MainWindow
-from app.views.pet_view import PetView, discover_pets
-from app.views.expanded_view import ExpandedView
-from app.views.archive_dialog import ArchiveDialog
+from app.models.todo_item import CST, ProgressEntry, StoreError, TodoItem
+from app.models.todo_store import TodoStore
+from app.services.autostart_service import AutostartService
+from app.services.reminder_service import ReminderService
 from app.services.theme_service import ThemeService
 from app.services.tray_service import TrayService
-from app.services.reminder_service import ReminderService
-from app.services.autostart_service import AutostartService
+from app.views.archive_dialog import ArchiveDialog
+from app.views.expanded_view import ExpandedView
+from app.views.main_window import MainWindow
+from app.views.pet_view import PetView, discover_pets
+from app.views.theme import AppTheme
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +77,7 @@ class AppController(QObject):
         self._pets = discover_pets()
         settings = AppConfig.settings()
         pet_id = settings.value("window/pet", "")
-        self._pet_view.load_pet(pet_id)
+        self._pet_view.load_pet(pet_id, self._pets)
         self._expanded_view.set_pets(self._pets, self._pet_view.pet_id())
 
         # ── 桌宠空闲动画开关（右键菜单，持久化） ─────────
@@ -458,10 +461,10 @@ class AppController(QObject):
             self._store.update_item(item)
             self._schedule_save()
             self._invalidate_search_index()
-            # 卡片已就地更新，无需整页刷新；但标题中的 #标签 可能变化，
-            # 必须同步标签筛选行，否则新增/删除的标签不体现、筛选结果过期
-            self._expanded_view.update_tag_filters(
-                self._collect_tags(), self._active_tag)
+            # 标题内容 / #标签 变化可能影响当前搜索、标签筛选结果，
+            # 统一走差分刷新（只增删改对应卡片，不会整页重建），
+            # 并同步标签筛选行，避免“改了标签但卡片仍留在筛选结果”的问题。
+            self._refresh_views()
             self._show_notification("已更新标题")
         except StoreError as e:
             item.title = old_title  # 回滚内存状态
@@ -759,7 +762,7 @@ class AppController(QObject):
 
     def _on_pet_selected(self, pet_id: str) -> None:
         """切换桌宠形象并持久化"""
-        self._pet_view.load_pet(pet_id)
+        self._pet_view.load_pet(pet_id, self._pets)
         settings = AppConfig.settings()
         settings.setValue("window/pet", self._pet_view.pet_id())
         self._expanded_view.set_selected_pet(self._pet_view.pet_id())

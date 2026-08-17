@@ -155,6 +155,8 @@ class TestControllerTodo:
         assert len(controller._filtered_items()) == 1
         controller._on_title_changed(item.id, "改名 #生活")
         assert controller._filtered_items() == []
+        # 视图也应同步刷新：残留卡片不再显示在列表里
+        assert controller._expanded_view._items == []
 
 
 class TestControllerNotes:
@@ -325,6 +327,7 @@ class TestAutoArchiveNotify:
     def test_notifies_once_per_day(self, app, tmp_path, monkeypatch):
         """启动自动归档后应提示一次；同一天再次启动不重复提示"""
         from PySide6.QtCore import QSettings as QtQSettings
+
         from app.controllers.app_controller import AppController
 
         monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)

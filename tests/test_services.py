@@ -15,10 +15,9 @@ import pytest
 from PySide6.QtCore import QSettings as QtQSettings
 from PySide6.QtWidgets import QApplication
 
-from app.config import AppConfig
 from app.models.todo_item import CST, TodoItem
-from app.services.reminder_service import ReminderService
 from app.services.autostart_service import AutostartService
+from app.services.reminder_service import ReminderService
 from app.services.theme_service import ThemeService
 from app.views.theme import AppTheme
 

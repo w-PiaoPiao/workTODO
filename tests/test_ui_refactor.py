@@ -10,15 +10,15 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QEvent, QPointF, QSettings, QObject
-from PySide6.QtGui import QEnterEvent, QAction
+from PySide6.QtCore import QEvent, QObject, QPointF, QSettings
+from PySide6.QtGui import QAction, QEnterEvent
 from PySide6.QtWidgets import QApplication
 
 from app.config import AppConfig
+from app.models.todo_item import TodoItem
 from app.views.icons import AppIcons
 from app.views.title_bar import TitleBar
 from app.views.todo_card import TodoCard
-from app.models.todo_item import TodoItem
 
 
 class _FakeMenu(QObject):
@@ -54,7 +54,6 @@ def app():
 
 class TestAppIcons:
     def test_all_icons_load(self, app):
-        from pathlib import Path
         d = AppConfig.resource_path("app/resources/icons")
         names = sorted(p.stem for p in d.glob("*.svg"))
         assert names, "图标目录为空"
@@ -140,8 +139,8 @@ class TestTodoCard:
 class TestArchiveDialog:
     def test_search_matches_progress_text(self, app):
         """归档搜索应覆盖进度文本（与主搜索一致）"""
+        from app.models.todo_item import ProgressEntry, TodoItem
         from app.views.archive_dialog import ArchiveDialog
-        from app.models.todo_item import TodoItem, ProgressEntry
 
         item = TodoItem(title="标题无关键词")
         item.progress.append(ProgressEntry(text="关键进度词"))

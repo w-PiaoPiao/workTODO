@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from app.config import AppConfig
 
@@ -112,7 +112,7 @@ class AppTheme:
         （QScrollArea 视口、QMenu、QLineEdit 等）与主题一致，
         避免系统为深色模式而 app 主题为浅色时出现黑底/文字不清。
         """
-        from PySide6.QtGui import QPalette, QColor
+        from PySide6.QtGui import QColor, QPalette
         C = cls.C
         palette = app.palette()
         palette.setColor(QPalette.Window, QColor(C["bg_primary"]))

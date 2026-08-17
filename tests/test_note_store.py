@@ -1,6 +1,7 @@
 """测试便签模型与存储"""
 
 import json
+
 import pytest
 
 from app.models.note import Note, NoteStore

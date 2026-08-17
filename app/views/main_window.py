@@ -11,9 +11,19 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, Signal, QPoint, QSize, QTimer, QEvent
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget, QApplication
-from PySide6.QtGui import QMouseEvent, QScreen, QCursor
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QPoint,
+    QPropertyAnimation,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import QCursor, QMouseEvent, QScreen
+from PySide6.QtWidgets import QApplication, QStackedWidget, QVBoxLayout, QWidget
 
 from app.config import AppConfig
 from app.views.theme import AppTheme

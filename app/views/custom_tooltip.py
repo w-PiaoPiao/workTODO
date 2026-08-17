@@ -14,15 +14,15 @@ Windows 原生 QToolTip 会忽略 QSS background 和 QPalette，导致黑底看�
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, QPoint, QObject, QEvent, QRect
-from PySide6.QtGui import QCursor, QScreen
-from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel, QApplication, QWidget
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, QTimer
+from PySide6.QtGui import QCursor
+from PySide6.QtWidgets import QApplication, QFrame, QLabel, QVBoxLayout, QWidget
 
 
 class CustomTooltip(QFrame):
     """白底自定义 tooltip 窗口（单例）"""
 
-    _instance: "CustomTooltip | None" = None
+    _instance: CustomTooltip | None = None
     _default_timeout_ms = 8000  # tooltip 显示 8 秒后自动隐藏
 
     def __new__(cls, parent=None):

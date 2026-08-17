@@ -8,11 +8,9 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field, asdict
-from datetime import date, datetime, timezone, timedelta
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
-from typing import Optional
-
 
 # ── 时区：东八区（北京时间） ─────────────────────────────────
 CST = timezone(timedelta(hours=8), "CST")
@@ -29,8 +27,8 @@ def _parse_due_date(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date()
 
 
-_today_cache: Optional[date] = None
-_today_cache_key: Optional[str] = None
+_today_cache: date | None = None
+_today_cache_key: str | None = None
 
 
 def _today() -> date:
@@ -90,7 +88,7 @@ def _sanitize_status(raw) -> str:
     return raw if raw in VALID_STATUSES else "active"
 
 
-def _sanitize_due_date(raw) -> Optional[str]:
+def _sanitize_due_date(raw) -> str | None:
     """截止日期格式校验，非法值置 None（避免界面显示怪串）"""
     if raw is None:
         return None
@@ -122,7 +120,7 @@ class ProgressEntry:
         return {"text": self.text, "timestamp": self.timestamp, "id": self.id}
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ProgressEntry":
+    def from_dict(cls, data: dict) -> ProgressEntry:
         return cls(
             text=data.get("text", ""),
             timestamp=data.get("timestamp", _now_iso()),
@@ -142,11 +140,11 @@ class TodoItem:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     status: str = "active"  # active | completed | archived
     created_at: str = field(default_factory=_now_iso)
-    completed_at: Optional[str] = None
+    completed_at: str | None = None
     progress: list[ProgressEntry] = field(default_factory=list)
     sticky: bool = False  # 是否置顶
     position: int = 0     # 手动排序位置（0=最前）
-    due_date: Optional[str] = None  # 截止日期 "YYYY-MM-DD"
+    due_date: str | None = None  # 截止日期 "YYYY-MM-DD"
     tags: list[str] = field(default_factory=list)  # 分类标签（#标签）
 
     # ── 属性 ──────────────────────────────────────────────
@@ -187,9 +185,9 @@ class TodoItem:
             return f"已过期 {self.due_date}"
         today = _today()
         if due == today:
-            return f"今天到期"
+            return "今天到期"
         if (due - today).days == 1:
-            return f"明天到期"
+            return "明天到期"
         return self.due_date
 
     @property
@@ -205,7 +203,7 @@ class TodoItem:
         return ""
 
     @property
-    def latest_progress(self) -> Optional[str]:
+    def latest_progress(self) -> str | None:
         """最近一条进度文本"""
         if self.progress:
             return self.progress[-1].text
@@ -228,7 +226,7 @@ class TodoItem:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TodoItem":
+    def from_dict(cls, data: dict) -> TodoItem:
         title = data.get("title", "")
         if isinstance(title, str):
             title = title.strip()

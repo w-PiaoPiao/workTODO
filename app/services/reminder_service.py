@@ -9,8 +9,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable, Optional
 
 from PySide6.QtCore import QObject, QTimer
 
@@ -26,9 +26,9 @@ class ReminderService(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self._todos_provider: Optional[Callable[[], list[TodoItem]]] = None
-        self._notify: Optional[Callable[[str], None]] = None
-        self._supports_messages: Optional[Callable[[], bool]] = None
+        self._todos_provider: Callable[[], list[TodoItem]] | None = None
+        self._notify: Callable[[str], None] | None = None
+        self._supports_messages: Callable[[], bool] | None = None
 
         self._timer = QTimer(self)
         self._timer.setInterval(AppConfig.DUE_REMIND_CHECK_MS)
@@ -58,11 +58,10 @@ class ReminderService(QObject):
 
         overdue: list[str] = []
         due_today: list[str] = []
-        touched_ids: list[str] = []
+        newly_reminded: list[str] = []
         for t in self._todos_provider():
             if not t.is_active or not t.due_date:
                 continue
-            touched_ids.append(t.id)
             if t.id in reminded:
                 continue
             try:
@@ -71,8 +70,10 @@ class ReminderService(QObject):
                 continue
             if due < today:
                 overdue.append(t.title)
+                newly_reminded.append(t.id)
             elif due == today:
                 due_today.append(t.title)
+                newly_reminded.append(t.id)
 
         if overdue or due_today:
             parts = []
@@ -82,9 +83,11 @@ class ReminderService(QObject):
                 parts.append(f"今日到期：{'、'.join(due_today[:3])}")
             self._notify("；".join(parts))
 
-        # 标记本次已检查的 id，避免重复提醒
-        if touched_ids:
-            settings.setValue(f"reminders/{today_key}", ",".join(touched_ids))
+        # 只记录“实际已提醒”的 id，避免未来到期项提前占位、
+        # 导致用户当天改期到今天时漏提醒（今天已提醒的仍累计保留）
+        if newly_reminded:
+            reminded.update(newly_reminded)
+            settings.setValue(f"reminders/{today_key}", ",".join(sorted(reminded)))
 
         # 清理历史日期的提醒键，防止 QSettings 键无限累积
         for key in settings.allKeys():

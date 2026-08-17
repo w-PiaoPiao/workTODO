@@ -7,13 +7,20 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QInputDialog, QLineEdit,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
-from app.views.theme import AppTheme
-from app.views.elided_label import ElidedLabel
+
 from app.models.todo_item import ProgressEntry
+from app.views.elided_label import ElidedLabel
+from app.views.theme import AppTheme
 
 
 class ClickableElidedLabel(ElidedLabel):

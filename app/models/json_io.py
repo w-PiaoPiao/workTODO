@@ -60,11 +60,11 @@ def atomic_write_json(path: Path, data, *, indent: int = 2, ensure_ascii: bool =
         tmp_path.write_text(content, encoding="utf-8")
         # Windows 上 replace 是原子操作（同分区）
         tmp_path.replace(path)
-    except (IOError, OSError, PermissionError) as e:
+    except (OSError, PermissionError) as e:
         # 清理临时文件
         if tmp_path.exists():
             tmp_path.unlink()
-        raise StoreError(f"保存失败 ({path.name}): {e}")
+        raise StoreError(f"保存失败 ({path.name}): {e}") from e
 
 
 def backup_corrupted(path: Path) -> None:
@@ -73,5 +73,5 @@ def backup_corrupted(path: Path) -> None:
     try:
         shutil.copy2(path, bak_path)
         logger.info("已备份损坏文件到 %s", bak_path)
-    except (IOError, OSError) as e:
+    except OSError as e:
         logger.error("备份损坏文件失败: %s", e)

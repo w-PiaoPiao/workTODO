@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from PySide6.QtCore import QObject, QSettings, QTimer, Signal
 
@@ -63,11 +62,12 @@ class ThemeService(QObject):
         if font_scale != AppConfig.FONT_SCALE_DEFAULT:
             AppTheme.set_font_scale(font_scale)
 
-        # 30 秒轮询系统主题（自动模式）
+        # 30 秒轮询系统主题：仅在“跟随系统”模式下运行，避免无意义的定时唤醒
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(30_000)
         self._poll_timer.timeout.connect(self._poll_system_theme)
-        self._poll_timer.start()
+        if self._theme_mode == "auto":
+            self._poll_timer.start()
 
     # ── 对外接口 ──────────────────────────────────────────
 
@@ -109,6 +109,12 @@ class ThemeService(QObject):
         settings = AppConfig.settings()
         settings.setValue(SETTINGS_MODE_KEY, self._theme_mode)
         settings.remove(SETTINGS_OLD_DARK_KEY)  # 清理旧版本键
+        # 仅“跟随系统”需要后台轮询；其它模式停掉定时器
+        if mode == "auto":
+            if not self._poll_timer.isActive():
+                self._poll_timer.start()
+        else:
+            self._poll_timer.stop()
         self.apply()
 
     def set_font_scale(self, scale: float) -> None:

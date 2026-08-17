@@ -8,8 +8,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QObject, Signal
-from PySide6.QtGui import QAction, QIcon, QPainter, QPainterPath, QPen, QColor, QPixmap
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from app.config import AppConfig

@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QPoint, Qt, QAbstractAnimation
+from PySide6.QtCore import QAbstractAnimation, QPoint, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
 
@@ -209,8 +209,9 @@ def _make_white_bg_jpg(path: Path) -> None:
 def test_ensure_transparent_removes_white_bg(app, tmp_path, monkeypatch):
     """白底自动去除：边缘连通白色 → 透明，内部白色保留"""
     monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
-    from app.views.pet_view import ensure_transparent
     from PIL import Image
+
+    from app.views.pet_view import ensure_transparent
 
     src = tmp_path / "pet.jpg"
     _make_white_bg_jpg(src)
@@ -240,8 +241,9 @@ def test_ensure_transparent_uses_cache(app, tmp_path, monkeypatch):
 def test_ensure_transparent_skips_already_transparent(app, tmp_path, monkeypatch):
     """已有透明像素的 PNG 直接返回原路径"""
     monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
-    from app.views.pet_view import ensure_transparent
     from PIL import Image
+
+    from app.views.pet_view import ensure_transparent
 
     src = tmp_path / "pet.png"
     img = Image.new("RGBA", (100, 100), (255, 255, 255, 255))

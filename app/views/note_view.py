@@ -7,14 +7,21 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QFrame, QSizePolicy,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
-from app.views.theme import AppTheme
+
 from app.models.note import Note
 from app.views.note_dialog import NoteDialog
+from app.views.theme import AppTheme
 from app.views.ui_utils import clear_layout
 
 

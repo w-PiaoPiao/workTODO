@@ -1,7 +1,8 @@
 """pytest 共享 fixtures"""
 
 import pytest
-from app.models.todo_item import TodoItem, ProgressEntry
+
+from app.models.todo_item import ProgressEntry, TodoItem
 
 
 @pytest.fixture
@@ -20,7 +21,7 @@ def item_with_progress():
 @pytest.fixture
 def completed_item():
     item = TodoItem(title="已完成待办", status="completed")
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
     cst = timezone(timedelta(hours=8), "CST")
     item.completed_at = datetime.now(cst).isoformat(timespec="seconds")
     return item

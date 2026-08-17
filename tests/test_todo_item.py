@@ -1,6 +1,6 @@
 """测试数据模型：ProgressEntry、TodoItem 序列化/反序列化"""
 
-from app.models.todo_item import TodoItem, ProgressEntry, _now_iso
+from app.models.todo_item import ProgressEntry, TodoItem, _now_iso
 
 
 class TestProgressEntry:
@@ -155,6 +155,7 @@ class TestTodoItem:
 
     def test_due_display_today(self):
         from datetime import datetime
+
         from app.models.todo_item import CST
         today = datetime.now(CST).strftime("%Y-%m-%d")
         item = TodoItem(title="今天到期", due_date=today)
@@ -162,6 +163,7 @@ class TestTodoItem:
 
     def test_due_display_tomorrow(self):
         from datetime import datetime, timedelta
+
         from app.models.todo_item import CST
         tomorrow = (datetime.now(CST) + timedelta(days=1)).strftime("%Y-%m-%d")
         item = TodoItem(title="明天到期", due_date=tomorrow)

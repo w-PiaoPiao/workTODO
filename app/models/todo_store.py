@@ -15,12 +15,11 @@ import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 from app.config import AppConfig
 from app.models.json_io import atomic_write_json, load_json_list
-from app.models.todo_item import TodoItem, StoreError, CST, _now_iso
 from app.models.note import Note
+from app.models.todo_item import CST, StoreError, TodoItem, _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +30,8 @@ class TodoStore:
     def __init__(self):
         self._todos_path = AppConfig.todos_path()
         self._archive_path = AppConfig.archive_path()
-        self._todos: Optional[list[TodoItem]] = None   # 惰性缓存
-        self._archived: Optional[list[TodoItem]] = None
+        self._todos: list[TodoItem] | None = None   # 惰性缓存
+        self._archived: list[TodoItem] | None = None
         self._dirty_todos = False
         self._dirty_archived = False
 
@@ -137,7 +136,7 @@ class TodoStore:
         archived.append(item)
         self._dirty_archived = True
 
-    def restore_item(self, item_id: str) -> Optional[TodoItem]:
+    def restore_item(self, item_id: str) -> TodoItem | None:
         """从归档恢复到活跃列表，返回恢复的项目（标记脏）"""
         archived = self.load_archived()
         for i, item in enumerate(archived):
@@ -272,7 +271,7 @@ class TodoStore:
             raw = path.read_text("utf-8")
             data = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
-            raise StoreError(f"导入文件无效: {e}")
+            raise StoreError(f"导入文件无效: {e}") from e
 
         if not isinstance(data, dict) or not isinstance(data.get("todos"), list):
             raise StoreError("导入文件格式不正确")

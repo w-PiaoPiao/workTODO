@@ -11,10 +11,8 @@ SVG 图标渲染模块
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from PySide6.QtCore import Qt, QByteArray, QRectF
-from PySide6.QtGui import QIcon, QPixmap, QPainter
+from PySide6.QtCore import QByteArray, QRectF, Qt
+from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 from app.config import AppConfig
