@@ -22,7 +22,6 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -33,7 +32,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizeGrip,
     QSizePolicy,
-    QSlider,
     QStackedWidget,
     QTabBar,
     QVBoxLayout,
@@ -45,6 +43,9 @@ from app.models.todo_item import TodoItem
 from app.views.drag_drop_manager import DragDropManager
 from app.views.icons import AppIcons
 from app.views.note_view import NoteView
+from app.views.settings_panel import SettingsPanel
+from app.views.stats_panel import StatsPanel
+from app.views.tag_filter_row import TagFilterRow
 from app.views.theme import AppTheme
 from app.views.title_bar import TitleBar
 from app.views.todo_card import TodoCard
@@ -96,12 +97,9 @@ class ExpandedView(QFrame):
         self._drag_mgr.signal_reorder_items.connect(self.signal_reorder_items.emit)
         self._autostart = False  # 开机自启状态
         self._all_collapsed = False  # 全部卡片折叠状态
-        self._opacity = AppConfig.WINDOW_OPACITY_DEFAULT
         self._active_tag = ""  # 当前标签筛选（空=全部）
         self._all_tags: list[str] = []
         self._pets: list[dict] = []  # 桌宠形象 [{id, name, path}]
-        self._pet_buttons: dict[str, QPushButton] = {}  # pet_id → 缩略图按钮
-        self._pet_thumb_icons: dict[str, QIcon] = {}  # pet_id → 缩略图图标缓存
 
         # 搜索防抖 —— 复用单个 timer，避免每次按键创建新对象
         self._search_timer = QTimer()
@@ -174,7 +172,8 @@ class ExpandedView(QFrame):
         self._todo_layout.addWidget(self._search_bar_row)
 
         # ── 标签筛选行 ────────────────────────────────────
-        self._tag_row = self._make_tag_row()
+        self._tag_row = TagFilterRow()
+        self._tag_row.signal_tag_clicked.connect(self.signal_tag_filter_clicked.emit)
         self._todo_layout.addWidget(self._tag_row)
 
         # ── 待办列表区域 ──────────────────────────────────
@@ -231,8 +230,16 @@ class ExpandedView(QFrame):
         self.setLayout(main_layout)
 
         # ── 设置面板 / 统计面板 ────────────────────────
-        self._settings_panel = self._make_settings_panel()
-        self._stats_panel = self._make_stats_panel()
+        self._settings_panel = SettingsPanel(self)
+        self._settings_panel.signal_opacity_changed.connect(
+            self.signal_opacity_changed.emit)
+        self._settings_panel.signal_opacity_committed.connect(
+            self.signal_opacity_committed.emit)
+        self._settings_panel.signal_font_scale_committed.connect(
+            self.signal_font_scale_changed.emit)
+        self._settings_panel.signal_pet_selected.connect(
+            self.signal_pet_selected.emit)
+        self._stats_panel = StatsPanel(self)
 
         # ── 应用主题样式 ──────────────────────────────────
         self.reapply_theme()
@@ -276,13 +283,11 @@ class ExpandedView(QFrame):
 
     def set_opacity_value(self, value: float) -> None:
         """设置透明度值并同步滑块（由控制器调用，恢复持久化值）"""
-        self._opacity = value
-        self._opacity_slider.setValue(int(value * 100))
+        self._settings_panel.set_opacity_value(value)
 
     def set_font_scale_value(self, scale: float) -> None:
         """设置字号缩放并同步滑块（由控制器调用，恢复持久化值）"""
-        self._font_slider.setValue(int(scale * 100))
-        self._font_label.setText(f"{int(scale * 100)}%")
+        self._settings_panel.set_font_scale_value(scale)
 
     def _toggle_collapse_cards(self) -> None:
         """切换全部卡片的折叠/展开"""
@@ -291,138 +296,14 @@ class ExpandedView(QFrame):
         for w in self._iter_cards():
             w.set_all_collapsed(self._all_collapsed)
 
-    # ── 设置面板（透明度 + 字号） ──────────────────────────
-
-    def _make_settings_panel(self) -> QFrame:
-        """创建设置弹出面板（透明度滑块 + 字号滑块 + 桌宠形象）"""
-        panel = QFrame(self)
-        panel.setFixedWidth(220)
-        panel.setStyleSheet(AppTheme.popup_panel_style())
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(4)
-
-        opacity_row = QHBoxLayout()
-        opacity_row.setSpacing(8)
-        opacity_label = QLabel("透明度")
-        opacity_label.setStyleSheet(AppTheme.panel_label_style())
-        opacity_label.setFixedWidth(44)
-
-        self._opacity_label = QLabel("100%")
-        self._opacity_label.setStyleSheet(AppTheme.panel_label_style())
-        self._opacity_label.setMinimumWidth(36)
-
-        self._opacity_slider = QSlider(Qt.Horizontal)
-        self._opacity_slider.setRange(
-            int(AppConfig.WINDOW_OPACITY_MIN * 100),
-            int(AppConfig.WINDOW_OPACITY_MAX * 100),
-        )
-        self._opacity_slider.setValue(int(self._opacity * 100))
-        self._opacity_slider.valueChanged.connect(self._on_opacity_slider_changed)
-        self._opacity_slider.sliderReleased.connect(self._on_opacity_committed)
-
-        opacity_row.addWidget(opacity_label)
-        opacity_row.addWidget(self._opacity_slider, stretch=1)
-        opacity_row.addWidget(self._opacity_label)
-
-        font_row = QHBoxLayout()
-        font_row.setSpacing(8)
-        font_label = QLabel("字号")
-        font_label.setStyleSheet(AppTheme.panel_label_style())
-        font_label.setFixedWidth(44)
-
-        self._font_label = QLabel("100%")
-        self._font_label.setStyleSheet(AppTheme.panel_label_style())
-        self._font_label.setMinimumWidth(36)
-
-        self._font_slider = QSlider(Qt.Horizontal)
-        self._font_slider.setRange(
-            int(AppConfig.FONT_SCALE_MIN * 100),
-            int(AppConfig.FONT_SCALE_MAX * 100),
-        )
-        self._font_slider.setValue(int(AppTheme.font_scale() * 100))
-        self._font_slider.valueChanged.connect(self._on_font_slider_changed)
-        self._font_slider.sliderReleased.connect(self._on_font_committed)
-
-        font_row.addWidget(font_label)
-        font_row.addWidget(self._font_slider, stretch=1)
-        font_row.addWidget(self._font_label)
-
-        pet_row = QHBoxLayout()
-        pet_row.setSpacing(6)
-        pet_label = QLabel("宠物")
-        pet_label.setStyleSheet(AppTheme.panel_label_style())
-        pet_label.setFixedWidth(44)
-        self._pet_thumbs_row = QHBoxLayout()
-        self._pet_thumbs_row.setSpacing(4)
-        pet_row.addWidget(pet_label)
-        pet_row.addLayout(self._pet_thumbs_row, stretch=1)
-
-        layout.addLayout(opacity_row)
-        layout.addLayout(font_row)
-        layout.addLayout(pet_row)
-        panel.adjustSize()
-        panel.hide()
-        return panel
-
     def set_pets(self, pets: list[dict], selected_id: str) -> None:
         """设置桌宠形象列表并构建缩略图按钮（由控制器调用）"""
         self._pets = pets
-        while self._pet_thumbs_row.count():
-            item = self._pet_thumbs_row.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-        self._pet_buttons.clear()
-        self._pet_thumb_icons.clear()
-
-        for pet in pets:
-            pixmap = QPixmap(str(pet["path"]))
-            icon = QIcon(pixmap.scaled(
-                26, 26, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            self._pet_thumb_icons[pet["id"]] = icon
-
-            btn = QPushButton()
-            btn.setFixedSize(30, 30)
-            btn.setIconSize(QSize(26, 26))
-            btn.setIcon(icon)
-            btn.setToolTip(pet["name"])
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet(AppTheme.pet_thumb_btn(pet["id"] == selected_id))
-            btn.clicked.connect(
-                lambda checked=False, pid=pet["id"]: self._on_pet_thumb_clicked(pid))
-            self._pet_thumbs_row.addWidget(btn)
-            self._pet_buttons[pet["id"]] = btn
+        self._settings_panel.set_pets(pets, selected_id)
 
     def set_selected_pet(self, pet_id: str) -> None:
         """高亮当前选中的桌宠形象（由控制器调用）"""
-        for pid, btn in self._pet_buttons.items():
-            btn.setStyleSheet(AppTheme.pet_thumb_btn(pid == pet_id))
-
-    def _on_pet_thumb_clicked(self, pet_id: str) -> None:
-        """桌宠形象缩略图点击"""
-        self.set_selected_pet(pet_id)
-        self.signal_pet_selected.emit(pet_id)
-
-    def _on_opacity_slider_changed(self, value: int) -> None:
-        """滑块值变化时实时更新窗口透明度"""
-        opacity = value / 100.0
-        self._opacity = opacity
-        self._opacity_label.setText(f"{value}%")
-        self.signal_opacity_changed.emit(opacity)
-
-    def _on_opacity_committed(self) -> None:
-        """松手后持久化透明度（避免拖动时高频写注册表）"""
-        self.signal_opacity_committed.emit(self._opacity)
-
-    def _on_font_slider_changed(self, value: int) -> None:
-        """字号滑块变化：仅更新显示，松手才应用"""
-        self._font_label.setText(f"{value}%")
-
-    def _on_font_committed(self) -> None:
-        """字号滑块松手：应用缩放并持久化"""
-        scale = self._font_slider.value() / 100.0
-        self.signal_font_scale_changed.emit(scale)
+        self._settings_panel.set_selected_pet(pet_id)
 
     def _toggle_settings_panel(self) -> None:
         """切换设置面板的显示/隐藏"""
@@ -447,35 +328,9 @@ class ExpandedView(QFrame):
 
     # ── 统计面板 ──────────────────────────────────────────
 
-    def _make_stats_panel(self) -> QFrame:
-        """创建统计弹出面板"""
-        panel = QFrame(self)
-        panel.setFixedSize(180, 110)
-        panel.setStyleSheet(AppTheme.popup_panel_style())
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(3)
-
-        self._stats_labels: list[QLabel] = []
-        for _ in range(5):
-            label = QLabel("")
-            label.setStyleSheet(AppTheme.panel_label_style())
-            layout.addWidget(label)
-            self._stats_labels.append(label)
-        panel.hide()
-        return panel
-
     def show_stats(self, stats: dict) -> None:
         """显示统计面板（由控制器提供数据后调用）"""
-        lines = [
-            f"待办 {stats['active_count']} 项",
-            f"今日完成 {stats['today_completed']} 项",
-            f"本周完成 {stats['week_completed']} 项",
-            f"累计完成 {stats['total_completed']} 项",
-            f"归档 {stats['archived_count']} 条",
-        ]
-        for label, text in zip(self._stats_labels, lines, strict=False):
-            label.setText(text)
+        self._stats_panel.show_stats(stats)
 
         if not self._stats_panel.isVisible():
             btn_rect = self._title_bar.more_btn_rect()
@@ -495,66 +350,12 @@ class ExpandedView(QFrame):
 
     # ── 标签筛选行 ────────────────────────────────────────
 
-    def _make_tag_row(self) -> QWidget:
-        """创建标签筛选行（横向可滚动，无标签时隐藏）"""
-        row = QWidget()
-        row.setFixedHeight(32)
-        row.setStyleSheet(f"""
-            background: {AppTheme.C["bg_primary"]};
-            border-bottom: 1px solid {AppTheme.C["border"]};
-        """)
-
-        outer = QHBoxLayout()
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        self._tag_scroll = QScrollArea()
-        self._tag_scroll.setWidgetResizable(True)
-        self._tag_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._tag_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._tag_scroll.setFixedHeight(32)
-        self._tag_scroll.setStyleSheet(
-            "QScrollArea { border: none; background: transparent; }")
-
-        self._tag_container = QWidget()
-        self._tag_container.setStyleSheet("background: transparent;")
-        self._tag_layout = QHBoxLayout()
-        self._tag_layout.setContentsMargins(12, 2, 12, 2)
-        self._tag_layout.setSpacing(6)
-        self._tag_container.setLayout(self._tag_layout)
-        self._tag_scroll.setWidget(self._tag_container)
-
-        outer.addWidget(self._tag_scroll)
-        row.setLayout(outer)
-        row.hide()
-        return row
-
     def update_tag_filters(self, tags: list[str], active_tag: str) -> None:
         """更新标签筛选 chips（由控制器调用）"""
+        # 在视图层保留一份副本，方便测试/外部读取
         self._all_tags = tags
         self._active_tag = active_tag
-        # 清空旧 chips
-        while self._tag_layout.count():
-            item = self._tag_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-        if not tags:
-            self._tag_row.hide()
-            return
-
-        def _make_btn(text: str, tag: str):
-            btn = QPushButton(text)
-            btn.setStyleSheet(AppTheme.tag_filter_btn(tag == active_tag))
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.clicked.connect(
-                lambda checked, t=tag: self.signal_tag_filter_clicked.emit(t))
-            return btn
-
-        self._tag_layout.addWidget(_make_btn("全部", ""))
-        for tag in tags:
-            self._tag_layout.addWidget(_make_btn(f"#{tag}", tag))
-        self._tag_row.show()
+        self._tag_row.update_tags(tags, active_tag)
 
     # ── 搜索栏 ──────────────────────────────────────────────
 
@@ -1098,24 +899,10 @@ class ExpandedView(QFrame):
         self._archive_btn.setStyleSheet(AppTheme.text_link_btn())
         self._archive_btn.setIcon(AppIcons.get("archive", 14))
 
-        # ── 弹出面板 ────────────────────────────────────
-        self._settings_panel.setStyleSheet(AppTheme.popup_panel_style())
-        self._stats_panel.setStyleSheet(AppTheme.popup_panel_style())
-        self._opacity_label.setStyleSheet(AppTheme.panel_label_style())
-        self._font_label.setStyleSheet(AppTheme.panel_label_style())
-        for label in self._stats_labels:
-            label.setStyleSheet(AppTheme.panel_label_style())
-
-        # ── 标签筛选行 ────────────────────────────────────
-        self._tag_row.setStyleSheet(f"""
-            background: {C["bg_primary"]};
-            border-bottom: 1px solid {C["border"]};
-        """)
-        for i in range(self._tag_layout.count()):
-            w = self._tag_layout.itemAt(i).widget()
-            if isinstance(w, QPushButton):
-                w.setStyleSheet(AppTheme.tag_filter_btn(
-                    w.text() == ("全部" if not self._active_tag else f"#{self._active_tag}")))
+        # ── 弹出面板 / 标签筛选行 ────────────────────────
+        self._settings_panel.reapply_theme()
+        self._stats_panel.reapply_theme()
+        self._tag_row.reapply_theme()
 
         # ── 待办/便签标签栏 ──────────────────────────────
         self._tab_bar.setStyleSheet(AppTheme.tab_bar_style())
