@@ -116,6 +116,11 @@ class AppConfig:
     STICK_HOVER_DELAY_MS = 150      # 鼠标悬停后弹出的延迟（毫秒）
     STICK_HIDE_DELAY_MS = 500       # 鼠标离开后隐藏的延迟（毫秒）
 
+    # ── 贴顶隐藏位置提示条（DockIndicator） ────────────────
+    DOCK_INDICATOR_WIDTH = 64       # 提示条宽度
+    DOCK_INDICATOR_HEIGHT = 32      # 提示条高度（从屏幕顶边垂下）
+    DOCK_INDICATOR_PULSE_MS = 1500  # 首次出现的呼吸闪烁时长（毫秒）
+
     # ── 颜色（浅色） ──────────────────────────────────────────
     COLORS = {
         "bg_primary": "#F3F3F3",

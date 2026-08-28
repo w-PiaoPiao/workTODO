@@ -224,6 +224,7 @@ class AppController(QObject):
         active_count = len([t for t in self._todos if t.is_active])
         archived_count = len(self._archived)
         self._pet_view.update_count(active_count)
+        self._window.update_dock_count(active_count)
         self._expanded_view.update_stats(active_count, archived_count)
 
     def _refresh_notes(self) -> None:
@@ -292,6 +293,7 @@ class AppController(QObject):
 
         # 主窗口
         self._window.signal_close_requested.connect(self._on_close_requested)
+        self._window.signal_dock_quit_requested.connect(self._on_quit)
 
         # 置顶切换（两个视图同步）
         self._pet_view.signal_toggle_pin.connect(self._on_toggle_pin)

@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import (
     QEasingCurve,
     QEvent,
@@ -26,7 +28,10 @@ from PySide6.QtGui import QCursor, QMouseEvent, QScreen
 from PySide6.QtWidgets import QApplication, QStackedWidget, QVBoxLayout, QWidget
 
 from app.config import AppConfig
+from app.views.dock_indicator import DockIndicator
 from app.views.theme import AppTheme
+
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(QWidget):
@@ -35,6 +40,7 @@ class MainWindow(QWidget):
     # ── 外部信号 ──────────────────────────────────────────
     signal_mode_changed = Signal(str)  # "collapsed" | "expanded"
     signal_close_requested = Signal()
+    signal_dock_quit_requested = Signal()  # 贴顶指示条右键"退出"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -69,6 +75,15 @@ class MainWindow(QWidget):
         self._hide_timer.setSingleShot(True)
         self._hide_timer.setInterval(AppConfig.STICK_HIDE_DELAY_MS)
         self._hide_timer.timeout.connect(self._do_hide)
+
+        # ── 贴顶隐藏位置提示条 ────────────────────────────
+        self._dock_indicator = DockIndicator()
+        self._dock_indicator.signal_clicked.connect(self.expand)
+        self._dock_indicator.signal_hovered.connect(
+            self._on_dock_indicator_hovered)
+        self._dock_indicator.signal_expand_clicked.connect(self.expand)
+        self._dock_indicator.signal_quit_requested.connect(
+            self.signal_dock_quit_requested.emit)
 
         # ── 子视图占位（由外部注入）───────────────────────
         self._collapsed_view: QWidget = None
@@ -376,6 +391,9 @@ class MainWindow(QWidget):
 
         self._stick_hover_timer.start()
 
+        self._sync_dock_indicator()
+        self._maybe_show_stick_tip()
+
     def _full_unstick(self) -> None:
         """彻底取消贴顶隐藏（不移动窗口），拖拽时调用"""
         if not self._stuck_to_top:
@@ -385,6 +403,46 @@ class MainWindow(QWidget):
         self._show_pending = False
         self._stick_hover_timer.stop()
         self._hide_timer.stop()
+        self._sync_dock_indicator()
+
+    # ── 贴顶提示条 ────────────────────────────────────────
+
+    def _sync_dock_indicator(self) -> None:
+        """按当前状态同步贴顶指示条：贴顶隐藏时显示，其余状态隐藏
+
+        显示条件 = 应用可见 且 处于贴顶 且 未临时唤出。
+        """
+        visible = (self.isVisible() and self._stuck_to_top
+                   and not self._temporarily_visible)
+        self._dock_indicator.setVisible(visible)
+        if visible:
+            self._dock_indicator.setWindowOpacity(self.windowOpacity())
+            self._dock_indicator.position_at(
+                self._stuck_screen_geo, self.x(), self.width())
+            self._dock_indicator.raise_()
+            self._dock_indicator.start_pulse()
+
+    def _on_dock_indicator_hovered(self) -> None:
+        """鼠标进入提示条 → 临时唤出桌宠（复用顶部热区机制）"""
+        if self._stuck_to_top and not self._temporarily_visible:
+            self._temporarily_show()
+            self._sync_dock_indicator()
+
+    def _maybe_show_stick_tip(self) -> None:
+        """首次贴顶隐藏时用 tooltip 提示找回方式（一次性，QSettings 去重）"""
+        settings = AppConfig.settings()
+        key = "notify/stick_tip_shown"
+        if settings.value(key, False, type=bool):
+            return
+        settings.setValue(key, True)
+        try:
+            from app.views.custom_tooltip import CustomTooltip
+            pos = self._dock_indicator.pos() + self._dock_indicator.rect().bottomLeft()
+            CustomTooltip().show_tip(
+                "桌宠已贴顶隐藏 · 鼠标移到屏幕顶部或点击下方指示条即可展开",
+                pos=pos, timeout_ms=4000)
+        except Exception as e:  # 提示失败不影响功能
+            logger.warning("贴顶提示 tooltip 显示失败: %s", e)
 
     def _temporarily_show(self) -> None:
         """临时展开窗口（鼠标悬停触发，离开后再次隐藏）"""
@@ -393,6 +451,7 @@ class MainWindow(QWidget):
         self._temporarily_visible = True
         self.move(self._restore_rect.topLeft())
         self._set_pet_idle(True)
+        self._sync_dock_indicator()
 
     def _schedule_hide(self) -> None:
         """安排隐藏计时（鼠标离开窗口时调用）"""
@@ -413,6 +472,7 @@ class MainWindow(QWidget):
         restore_pos = self._restore_rect.topLeft()
         new_y = geo.top() - self._restore_rect.height() + AppConfig.STICK_TO_TOP_PEEK_HEIGHT
         self.move(restore_pos.x(), new_y)
+        self._sync_dock_indicator()
 
     def _on_stick_hover_check(self) -> None:
         """定时检测鼠标位置，管理隐藏/展开状态"""
@@ -478,9 +538,23 @@ class MainWindow(QWidget):
             self.move(self._restore_rect.topLeft())
         self._set_pet_idle(True)
 
+    def update_dock_count(self, count: int) -> None:
+        """把待办计数转发到贴顶指示条角标（控制器刷新视图时调用）"""
+        self._dock_indicator.set_count(count)
+
     def set_opacity(self, value: float) -> None:
-        """设置窗口透明度 (0.0 ~ 1.0)"""
+        """设置窗口透明度 (0.0 ~ 1.0)，同步到贴顶指示条保持一致"""
         self.setWindowOpacity(value)
+        self._dock_indicator.setWindowOpacity(value)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_dock_indicator()
+
+    def hideEvent(self, event):
+        # 最小化到托盘等场景：不残留孤儿提示条
+        self._dock_indicator.hide()
+        super().hideEvent(event)
 
     def closeEvent(self, event):
         if self._stuck_to_top:
