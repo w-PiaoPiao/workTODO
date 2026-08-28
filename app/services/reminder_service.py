@@ -54,7 +54,8 @@ class ReminderService(QObject):
         today = datetime.now(CST).date()
         today_key = today.isoformat()
         settings = AppConfig.settings()
-        reminded = set((settings.value(f"reminders/{today_key}", "") or "").split(","))
+        # filter(None, ...)：空存储值 split 出的 "" 占位不写回（避免脏数据累积）
+        reminded = set(filter(None, (settings.value(f"reminders/{today_key}", "") or "").split(",")))
 
         overdue: list[str] = []
         due_today: list[str] = []

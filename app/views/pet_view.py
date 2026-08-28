@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import random
+import zlib
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -96,7 +97,7 @@ def ensure_transparent(src: Path) -> Path:
 
     # 缓存命中（比源文件新）→ 直接用
     cache_dir = AppConfig.pets_dir() / "_processed"
-    cache = cache_dir / (src.stem + ".png")
+    cache = cache_dir / (_cache_key(src) + ".png")
     try:
         if cache.exists() and cache.stat().st_mtime >= src.stat().st_mtime:
             return cache
@@ -141,6 +142,16 @@ def ensure_transparent(src: Path) -> Path:
     except Exception as e:
         logger.warning("桌宠去白底失败 %s: %s", src, e)
         return src
+
+
+def _cache_key(src: Path) -> str:
+    """去白底缓存键：素材名 + 来源目录指纹（crc32） + 扩展名
+
+    仅用 stem 会让内置/用户目录的同名素材、同目录下同名不同扩展名的文件
+    共享同一缓存条目而互相覆盖（mtime 比对的也是另一个源文件）。
+    """
+    digest = zlib.crc32(str(src.resolve()).encode("utf-8"))
+    return f"{src.stem}_{digest:08x}{src.suffix[1:]}"
 
 
 class PetCanvas(QWidget):
@@ -202,10 +213,24 @@ class PetCanvas(QWidget):
         movie.frameChanged.connect(self.update)
         self.update()
 
+    def clear_content(self) -> None:
+        """清空内容引用（QMovie 的停止与销毁由持有方负责）
+
+        必须在持有方 deleteLater QMovie 之前调用：否则画布仍持有
+        已销毁的 C++ 对象，后续 paintEvent → current_pixmap() 会抛 RuntimeError。
+        """
+        self._movie = None
+        self._pixmap = None
+        self.update()
+
     def current_pixmap(self) -> QPixmap | None:
         """当前应显示的图片（静态帧或 GIF 当前帧）"""
-        if self._movie is not None:
-            return self._movie.currentPixmap()
+        try:
+            if self._movie is not None:
+                return self._movie.currentPixmap()
+        except RuntimeError:
+            # 悬空 QMovie 兜底（正常流程已由 clear_content 规避）
+            self._movie = None
         return self._pixmap
 
     def reset_transform(self) -> None:
@@ -490,6 +515,8 @@ class PetView(QWidget):
 
     def _clear_movie(self) -> None:
         if self._movie:
+            # 先让画布放下引用，再销毁 QMovie（否则画布持有悬空 C++ 对象）
+            self._pet_canvas.clear_content()
             self._movie.stop()
             self._movie.deleteLater()
             self._movie = None

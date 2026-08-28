@@ -21,6 +21,25 @@ def _now_iso() -> str:
     return datetime.now(CST).isoformat(timespec="seconds")
 
 
+def _get_str(data: dict, key: str, default: str) -> str:
+    """读取字符串字段：值缺失/为 null/非字符串（半损坏文件、手工编辑）时返回默认值
+
+    dict.get(key, default) 在"键存在但值为 null"时返回 None 而非默认值，
+    身份/时间字段的类型边界由此工具统一收口。
+    """
+    value = data.get(key)
+    return value if isinstance(value, str) else default
+
+
+def _get_id(data: dict, key: str = "id") -> str:
+    """读取 id 字段：缺失/空/非字符串时重新生成
+
+    避免 "id": null 的多条数据在按 id 匹配的 update/delete 时互相覆盖。
+    """
+    value = data.get(key)
+    return value if isinstance(value, str) and value else uuid.uuid4().hex
+
+
 @lru_cache(maxsize=256)
 def _parse_due_date(s: str) -> date:
     """解析 "YYYY-MM-DD" 截止日期（结果缓存，避免反复 strptime）"""
@@ -122,9 +141,9 @@ class ProgressEntry:
     @classmethod
     def from_dict(cls, data: dict) -> ProgressEntry:
         return cls(
-            text=data.get("text", ""),
-            timestamp=data.get("timestamp", _now_iso()),
-            id=data.get("id", uuid.uuid4().hex),  # 兼容旧数据
+            text=_get_str(data, "text", ""),
+            timestamp=_get_str(data, "timestamp", _now_iso()),
+            id=_get_id(data),  # 兼容旧数据（缺失/空/非法自动生成）
         )
 
     @property
@@ -227,22 +246,29 @@ class TodoItem:
 
     @classmethod
     def from_dict(cls, data: dict) -> TodoItem:
-        title = data.get("title", "")
-        if isinstance(title, str):
-            title = title.strip()
+        raw_progress = data.get("progress", [])
+        if not isinstance(raw_progress, list):
+            raw_progress = []
+        raw_tags = data.get("tags", [])
+        if not isinstance(raw_tags, list):
+            raw_tags = []  # 如手工编辑成字符串会逐字符拆出单字标签
+        completed_at = data.get("completed_at")
+        if not isinstance(completed_at, str):
+            completed_at = None
+        title = _get_str(data, "title", "").strip()
         return cls(
-            id=data.get("id", uuid.uuid4().hex),
+            id=_get_id(data),
             title=title,
             status=_sanitize_status(data.get("status", "active")),
-            created_at=data.get("created_at", _now_iso()),
-            completed_at=data.get("completed_at"),
+            created_at=_get_str(data, "created_at", _now_iso()),
+            completed_at=completed_at,
             progress=[
                 ProgressEntry.from_dict(p)
-                for p in data.get("progress", [])
+                for p in raw_progress
                 if isinstance(p, dict)
             ],
             sticky=bool(data.get("sticky", False)),
             position=_sanitize_position(data.get("position", 0)),
             due_date=_sanitize_due_date(data.get("due_date")),
-            tags=[t for t in data.get("tags", []) if isinstance(t, str)],
+            tags=[t for t in raw_tags if isinstance(t, str)],
         )

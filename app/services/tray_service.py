@@ -30,8 +30,10 @@ class TrayService(QObject):
         self._tray.setIcon(self._create_icon())
         self._tray.setToolTip("待办事项和便签")
 
-        # 右键菜单
-        menu = QMenu()
+        # 右键菜单（持有成员引用，不依赖框架对 setContextMenu 的所有权处理；
+        # QMenu 的 parent 只能是 QWidget，TrayService 是 QObject 故不挂 parent）
+        self._menu = QMenu()
+        menu = self._menu
         show_action = QAction("显示/隐藏", menu)
         show_action.triggered.connect(self.signal_show_requested)
         menu.addAction(show_action)

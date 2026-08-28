@@ -160,6 +160,22 @@ class TestArchiveDialog:
         d._on_search("随便")
         assert d._filtered_items == []
 
+    def test_remove_item_refreshes_dialog(self, app):
+        """恢复成功后控制器回调 remove_item：列表与计数同步移除，避免重复点击静默无效"""
+        from app.views.archive_dialog import ArchiveDialog
+
+        items = [TodoItem(title=f"归档{i}") for i in range(3)]
+        d = ArchiveDialog(items)
+        assert len(d._filtered_items) == 3
+        target = items[1]
+        d.remove_item(target.id)
+        assert len(d._all_items) == 2
+        assert len(d._filtered_items) == 2
+        assert target.id not in {i.id for i in d._filtered_items}
+        # 移除不存在的 id 无副作用
+        d.remove_item("nonexistent")
+        assert len(d._filtered_items) == 2
+
 
 class TestThemeService:
     def test_set_mode_persists(self, app):

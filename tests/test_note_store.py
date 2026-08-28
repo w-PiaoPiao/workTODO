@@ -40,6 +40,13 @@ class TestNote:
         assert note.id is not None
         assert note.color == "yellow"
 
+    def test_from_dict_null_fields_safe_defaults(self):
+        """null 字段取安全默认值（content 非 str 时视图层 QLabel 才不会 TypeError）"""
+        note = Note.from_dict({"content": None, "id": None, "created_at": None})
+        assert note.content == ""
+        assert note.id
+        assert note.created_at and note.updated_at
+
 
 class TestNoteStore:
     def test_empty(self, note_store):
@@ -84,7 +91,20 @@ class TestNoteStore:
         notes_file = tmp_path / "notes.json"
         notes_file.write_text("坏数据", encoding="utf-8")
         assert note_store.load_notes() == []
-        assert (tmp_path / "notes.json.bak").exists()
+        # 损坏文件隔离备份为带时间戳副本（不再是固定名覆盖式 .bak）
+        assert list(tmp_path.glob("notes.json.corrupt.*.bak"))
+        assert note_store.problems and note_store.problems[0][0] == "corrupted"
+
+    def test_corrupted_backup_not_overwritten(self, note_store, tmp_path):
+        """两次损坏产生两份隔离备份（时间戳命名不互相覆盖）"""
+        notes_file = tmp_path / "notes.json"
+        notes_file.write_text("坏数据一", encoding="utf-8")
+        note_store.load_notes()
+        notes_file.write_text("坏数据二", encoding="utf-8")
+        note_store._notes = None  # 重置缓存强制重新读盘
+        note_store.load_notes()
+        backups = list(tmp_path.glob("notes.json.corrupt.*.bak"))
+        assert len(backups) == 2
 
     def test_from_dict_unknown_color_fallback(self):
         note = Note.from_dict({"content": "未知颜色", "color": "red"})

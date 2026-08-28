@@ -29,6 +29,13 @@ class TestProgressEntry:
         assert e.id is not None
         assert e.timestamp is not None
 
+    def test_from_dict_null_fields_safe_defaults(self):
+        """null 字段取安全默认值而非 None 穿透"""
+        e = ProgressEntry.from_dict({"text": None, "timestamp": None, "id": None})
+        assert e.text == ""
+        assert e.timestamp
+        assert e.id
+
     def test_time_display(self):
         e = ProgressEntry(text="刚刚的", timestamp=_now_iso())
         assert "刚刚" in e.time_display or "分钟" in e.time_display
@@ -139,6 +146,34 @@ class TestTodoItem:
     def test_from_dict_tags_ignores_non_string(self):
         item = TodoItem.from_dict({"title": "脏标签", "tags": ["好", 123, None]})
         assert item.tags == ["好"]
+
+    def test_from_dict_null_id_regenerated(self):
+        """JSON 显式 "id": null 时应重新生成（避免多条数据按 id 匹配时互相覆盖）"""
+        a = TodoItem.from_dict({"title": "A", "id": None})
+        b = TodoItem.from_dict({"title": "B", "id": None})
+        assert a.id and b.id
+        assert a.id != b.id
+
+    def test_from_dict_null_fields_safe_defaults(self):
+        """时间/标签/进度字段为 null 时取安全默认值而非 None 穿透"""
+        item = TodoItem.from_dict({
+            "title": "T", "created_at": None, "completed_at": None,
+            "tags": None, "progress": None,
+        })
+        assert item.created_at  # 生成了当前时间字符串
+        assert item.completed_at is None
+        assert item.tags == []
+        assert item.progress == []
+
+    def test_from_dict_tags_string_not_char_split(self):
+        """tags 被手工编辑成字符串时不应逐字符拆成单字标签"""
+        item = TodoItem.from_dict({"title": "T", "tags": "工作"})
+        assert item.tags == []
+
+    def test_from_dict_non_string_title_skipped_by_sanitize(self):
+        """title 为非字符串时归一为空串（随后被空标题剔除逻辑过滤）"""
+        item = TodoItem.from_dict({"title": 123})
+        assert item.title == ""
 
     def test_is_overdue(self):
         item = TodoItem(title="已过期", due_date="2000-01-01")

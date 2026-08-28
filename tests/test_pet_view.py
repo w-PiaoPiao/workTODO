@@ -238,6 +238,31 @@ def test_ensure_transparent_uses_cache(app, tmp_path, monkeypatch):
     assert second.stat().st_mtime == mtime
 
 
+def test_ensure_transparent_cache_key_distinguishes_sources(app, tmp_path, monkeypatch):
+    """同名不同来源/目录的素材使用不同缓存键，不互相覆盖
+
+    缓存键只用 stem 时：内置与用户目录同名素材、同目录同名不同扩展名
+    会共享缓存条目（mtime 比对对象也是错的），加载到不相干的形象图。
+    """
+    monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
+    from app.views.pet_view import ensure_transparent
+
+    src_a = tmp_path / "pet.jpg"
+    _make_white_bg_jpg(src_a)
+    subdir = tmp_path / "user"
+    subdir.mkdir()
+    src_b = subdir / "pet.jpg"
+    _make_white_bg_jpg(src_b)
+
+    out_a = ensure_transparent(src_a)
+    out_b = ensure_transparent(src_b)
+    assert out_a != out_b
+    assert out_a.exists() and out_b.exists()
+    # 各自命中自己的缓存
+    assert ensure_transparent(src_a) == out_a
+    assert ensure_transparent(src_b) == out_b
+
+
 def test_ensure_transparent_skips_already_transparent(app, tmp_path, monkeypatch):
     """已有透明像素的 PNG 直接返回原路径"""
     monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)

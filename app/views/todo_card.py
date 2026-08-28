@@ -493,6 +493,10 @@ class TodoCard(QFrame):
         """收起进度展开（封装对 ProgressWidget 的内部访问）"""
         self._progress_widget.collapse()
 
+    def expand_progress(self) -> None:
+        """展开进度列表（封装对 ProgressWidget 的内部访问）"""
+        self._progress_widget.expand()
+
     def set_all_collapsed(self, collapsed: bool) -> None:
         """全部卡片折叠模式：隐藏进度区域和添加进度行，仅保留标题行
 

@@ -32,6 +32,17 @@ class ArchiveDialog(DragMixin, QDialog):
 
     signal_restore_item = Signal(str)  # item_id
 
+    def remove_item(self, item_id: str) -> None:
+        """恢复成功后由控制器回调：同步移除该条目并刷新
+
+        否则对话框停留在打开时的快照上，被恢复条目仍显示，
+        再次点击"恢复"静默无效（restore_item 返回 None），按钮像坏了。
+        """
+        self._all_items = [i for i in self._all_items if i.id != item_id]
+        self._filtered_items = [
+            i for i in self._filtered_items if i.id != item_id]
+        self._refresh()
+
     def __init__(self, items: list[TodoItem], parent=None):
         super().__init__(parent)
         self._all_items = items

@@ -10,10 +10,11 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from app.config import AppConfig
 from app.models.json_io import atomic_write_json, load_json_list
-from app.models.todo_item import StoreError, _now_iso
+from app.models.todo_item import StoreError, _get_id, _get_str, _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +39,14 @@ class Note:
 
     @classmethod
     def from_dict(cls, data: dict) -> Note:
-        color = data.get("color", "yellow")
+        color = _get_str(data, "color", "yellow")
         if color not in AppConfig.NOTE_COLORS:
             color = "yellow"
         return cls(
-            id=data.get("id", uuid.uuid4().hex),
-            content=data.get("content", ""),
-            created_at=data.get("created_at", _now_iso()),
-            updated_at=data.get("updated_at", _now_iso()),
+            id=_get_id(data),
+            content=_get_str(data, "content", ""),
+            created_at=_get_str(data, "created_at", _now_iso()),
+            updated_at=_get_str(data, "updated_at", _now_iso()),
             color=color,
         )
 
@@ -64,6 +65,8 @@ class NoteStore:
     def __init__(self):
         self._notes_path = AppConfig.notes_path()
         self._notes: list[Note] | None = None  # 惰性缓存
+        # 加载阶段的问题记录（kind, path, detail），由控制器读取后在 UI 告知用户
+        self.problems: list[tuple[str, Path, str]] = []
 
     def load_notes(self) -> list[Note]:
         """加载便签列表（带缓存）"""
@@ -97,15 +100,23 @@ class NoteStore:
         return False
 
     def save_notes(self, notes: list[Note]) -> None:
-        """立即写入磁盘（便签数量小、编辑频率低，无需防抖）"""
-        self._notes = notes
+        """立即写入磁盘（便签数量小、编辑频率低，无需防抖）
+
+        先写盘成功再更新缓存：写盘失败时内存与磁盘保持一致（旧数据），
+        避免清了缓存后失败导致状态分叉。
+        """
         self._save_items(notes)
+        self._notes = notes
 
     # ── 内部实现 ──────────────────────────────────────────
 
     def _load_items(self) -> list[Note]:
         """从 JSON 文件加载便签（解析/损坏备份由 json_io 统一处理）"""
-        data = load_json_list(self._notes_path)
+        data = load_json_list(
+            self._notes_path,
+            on_problem=lambda kind, path, detail: self.problems.append(
+                (kind, path, detail)),
+        )
 
         notes = []
         for entry in data:

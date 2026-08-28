@@ -1,4 +1,4 @@
-# 开发/测试/打包依赖
-pytest>=8.0
-ruff>=0.6
-pyinstaller>=6.0
+# 开发/测试/打包依赖（精确锁定：与本地工具链一致，hook/CI 行为可预期）
+pytest==9.1.1
+ruff==0.16.3
+pyinstaller==6.21.0

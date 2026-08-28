@@ -35,7 +35,7 @@ class AppTheme:
         "title": f"14pt '{FONT_FAMILY}'",
         "body": f"12pt '{FONT_FAMILY}'",
         "small": f"10pt '{FONT_FAMILY}'",
-        "body_bold": f"12pt '{FONT_FAMILY}'",
+        "body_bold": f"bold 12pt '{FONT_FAMILY}'",
     }
     _font_scale = 1.0  # 字号缩放比例（0.85 ~ 1.3）
     _qss_cache: str | None = None  # global_qss() 结果缓存（主题/字号变化时失效）
@@ -69,7 +69,7 @@ class AppTheme:
             "title": f"{round(14 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
             "body": f"{round(12 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
             "small": f"{round(10 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
-            "body_bold": f"{round(12 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
+            "body_bold": f"bold {round(12 * cls._font_scale, 1)}pt '{cls.FONT_FAMILY}'",
         }
         cls._invalidate_qss()
         cls._notify_listeners()
@@ -644,8 +644,12 @@ class AppTheme:
 
     @classmethod
     def note_card_style(cls, color_key: str) -> str:
-        """彩色便签卡片（color_key 见 AppConfig.NOTE_COLORS）"""
-        colors = AppConfig.NOTE_COLORS.get(color_key)
+        """彩色便签卡片（color_key 见 AppConfig.NOTE_COLORS）
+
+        未知/遗留 color_key 回退白色（与 note_color_btn 的兜底一致），
+        避免手工编辑过的 notes.json 使整列表刷新崩溃。
+        """
+        colors = AppConfig.NOTE_COLORS.get(color_key, ("#FFFFFF", "#2D2D2D"))
         bg = colors[0] if not cls.is_dark() else colors[1]
         border = cls.C["border"] if not cls.is_dark() else "#555555"
         return f"""

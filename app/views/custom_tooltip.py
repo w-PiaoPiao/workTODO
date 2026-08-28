@@ -24,6 +24,7 @@ class CustomTooltip(QFrame):
 
     _instance: CustomTooltip | None = None
     _default_timeout_ms = 8000  # tooltip 显示 8 秒后自动隐藏
+    _MAX_WIDTH = 480            # 单行宽度上限：超出强制换行（长标题不应横跨屏幕）
 
     def __new__(cls, parent=None):
         if cls._instance is None:
@@ -59,7 +60,7 @@ class CustomTooltip(QFrame):
 
         self._label = QLabel()
         self._label.setWordWrap(True)
-        self._label.setMaximumWidth(4000)
+        self._label.setMaximumWidth(self._MAX_WIDTH)
         self._label.setTextInteractionFlags(Qt.NoTextInteraction)
         layout.addWidget(self._label)
 
@@ -95,10 +96,10 @@ class CustomTooltip(QFrame):
 
         self._label.setText(text)
 
-        # 计算文本实际宽度，取文本宽度与最大宽度较小值
+        # 计算文本实际宽度，超出上限时强制换行
         fm = self._label.fontMetrics()
         tw = fm.horizontalAdvance(text)
-        mw = min(max(tw + 20, 40), 4000)
+        mw = min(max(tw + 20, 40), self._MAX_WIDTH)
         rect = fm.boundingRect(
             QRect(0, 0, mw, 10000),
             Qt.TextWordWrap,

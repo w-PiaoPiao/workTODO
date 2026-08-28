@@ -315,12 +315,20 @@ class MainWindow(QWidget):
         settings.setValue("window/pos", self.pos())
 
     def _restore_position(self) -> bool:
-        """从 QSettings 恢复窗口位置，成功返回 True"""
+        """从 QSettings 恢复窗口位置，成功返回 True
+
+        校验恢复位置在屏幕范围内：换显示器/改分辨率/QSettings 残留异常坐标时，
+        小窗口可能整体落在屏幕外，而托盘"显示"只 raise 不重定位、
+        贴顶指示条也不可用——用户将找不到任何入口找回窗口。
+        无效时回退默认位置（由调用方处理）。
+        """
         settings = AppConfig.settings()
         pos = settings.value("window/pos")
         if pos is not None and isinstance(pos, QPoint):
             self.move(pos)
-            return True
+            if QApplication.screenAt(self.geometry().center()) is not None:
+                return True
+            logger.warning("恢复的窗口位置超出屏幕范围，回退默认位置: %s", pos)
         return False
 
     def set_always_on_top(self, enabled: bool) -> None:

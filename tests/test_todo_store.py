@@ -102,13 +102,30 @@ class TestTodoStore:
         assert stats["archived_count"] == 0
 
     def test_corrupted_file(self, store, tmp_path):
-        """损坏的 JSON 文件应备份并返回空列表"""
+        """损坏的 JSON 文件应隔离备份并返回空列表，且问题上报"""
         todos_file = tmp_path / "todos.json"
         todos_file.write_text("这不是 json", encoding="utf-8")
         result = store.load_todos()
         assert result == []
-        bak_file = tmp_path / "todos.json.bak"
-        assert bak_file.exists()
+        assert list(tmp_path.glob("todos.json.corrupt.*.bak"))
+        assert store.problems and store.problems[0][0] == "corrupted"
+
+    def test_corrupted_backup_retention(self, store, tmp_path):
+        """损坏隔离备份超过保留份数时自动清理最旧的"""
+        from app.models.json_io import CORRUPT_BACKUP_KEEP
+
+        todos_file = tmp_path / "todos.json"
+        # 预置 CORRUPT_BACKUP_KEEP 份历史备份（占满配额）
+        for i in range(CORRUPT_BACKUP_KEEP):
+            (tmp_path / f"todos.json.corrupt.20260101_00000{i}_000000.bak"
+             ).write_text(f"旧备份{i}", encoding="utf-8")
+        todos_file.write_text("损坏内容", encoding="utf-8")
+        store.load_todos()
+        backups = list(tmp_path.glob("todos.json.corrupt.*.bak"))
+        assert len(backups) == CORRUPT_BACKUP_KEEP
+        # 最旧的预置备份被清理，新备份在
+        assert not (tmp_path / "todos.json.corrupt.20260101_000000_000000.bak"
+                    ).exists()
 
     def test_atomic_write(self, store):
         """原子写入：临时文件不应残留"""
@@ -183,6 +200,64 @@ class TestTodoStore:
         """save_todos 立即写盘"""
         store.save_todos([TodoItem(title="立即写")])
         assert (tmp_path / "todos.json").exists()
+
+    def test_save_todos_failure_keeps_old_cache(self, store, monkeypatch):
+        """save_todos 写盘失败时抛错且缓存不变（先写盘成功，再赋缓存）"""
+        old = TodoItem(title="旧数据")
+        store.add_item(old)
+        store.flush()
+
+        def _boom(path, items):
+            raise StoreError("模拟磁盘故障")
+
+        monkeypatch.setattr("app.models.todo_store.atomic_write_json", _boom)
+        with pytest.raises(StoreError):
+            store.save_todos([TodoItem(title="新数据")])
+        # 缓存仍是旧数据，与磁盘一致
+        todos = store.load_todos()
+        assert len(todos) == 1
+        assert todos[0].title == "旧数据"
+
+    def test_flush_archived_first_after_archive(self, store, monkeypatch):
+        """归档后双侧落盘先写归档侧：
+        先写来源侧时中途失败会"两侧皆无"（丢失），先写结果侧最坏是"重复"（可去重兜底）"""
+        item = TodoItem(title="跨侧")
+        store.add_item(item)
+        store.archive_item(item)
+        order = []
+        monkeypatch.setattr(
+            TodoStore, "_save_items",
+            lambda self, path, items: order.append(path.name))
+        store.flush()
+        assert order == ["archive.json", "todos.json"]
+
+    def test_flush_todos_first_after_restore(self, store, monkeypatch):
+        """恢复后双侧落盘先写活跃侧（方向与归档相反）"""
+        item = TodoItem(title="跨侧")
+        store.add_item(item)
+        store.archive_item(item)
+        store.flush()
+        order = []
+        monkeypatch.setattr(
+            TodoStore, "_save_items",
+            lambda self, path, items: order.append(path.name))
+        store.restore_item(item.id)
+        store.flush()
+        assert order == ["todos.json", "archive.json"]
+
+    def test_load_dedupes_cross_list_duplicates(self, store, tmp_path):
+        """同一 id 同时在活跃与归档（跨侧写盘中途失败的产物）时按归档侧去重"""
+        item = TodoItem(title="重复项", status="completed")
+        payload = json.dumps([item.to_dict()], ensure_ascii=False)
+        (tmp_path / "todos.json").write_text(payload, encoding="utf-8")
+        (tmp_path / "archive.json").write_text(payload, encoding="utf-8")
+        todos = store.load_todos()
+        archived = store.load_archived()
+        # 去重原地生效：先前返回的活跃列表引用也被同步清理
+        assert todos == []
+        assert len(archived) == 1
+        assert archived[0].id == item.id
+        assert store._dirty_todos is True  # 待下次 flush 落盘纠正
 
     # ── 统计 ────────────────────────────────────────────
 

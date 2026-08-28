@@ -51,7 +51,8 @@ class AutostartService:
                 exe_path = QApplication.instance().applicationFilePath()
                 vbs_path = AppConfig.DATA_DIR / "startup.vbs"
                 vbs_content = f'CreateObject("WScript.Shell").Run """{exe_path}""", 0, False'
-                vbs_path.write_text(vbs_content, encoding="utf-8-sig")
+                # WSH 不识别 UTF-8 BOM（报 Invalid character），必须用 utf-16（LE+BOM）
+                vbs_path.write_text(vbs_content, encoding="utf-16")
                 app_path = f'"{vbs_path}"'
             else:
                 # 源码开发模式：使用 pythonw main.py（避免开机弹 cmd 窗口）

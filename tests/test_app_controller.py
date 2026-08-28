@@ -147,16 +147,33 @@ class TestControllerTodo:
         assert controller._expanded_view._all_tags == ["生活"]
 
     def test_title_edit_keeps_active_tag_filter(self, controller):
-        """按标签筛选时，编辑掉该标签的条目应从结果中消失"""
+        """按标签筛选时，编辑掉某条目的该标签（其他条目仍带此标签），
+        该条目应从筛选结果中消失，筛选保持不变"""
+        controller._on_add_item("工作项A #工作")
+        controller._on_add_item("工作项B #工作")
+        item = controller._todos[0]
+        controller._on_tag_filter_clicked("工作")
+        assert len(controller._filtered_items()) == 2
+        controller._on_title_changed(item.id, "改名 #生活")
+        filtered = controller._filtered_items()
+        assert len(filtered) == 1
+        assert filtered[0].title == "工作项B #工作"
+        assert controller._active_tag == "工作"
+
+    def test_title_edit_resets_vanished_tag_filter(self, controller):
+        """被筛选标签从全部条目消失后筛选应自动复位（防死锁）：
+        否则标签行隐藏/无高亮时过滤仍生效，主列表显示误导性空态且无法在 UI 内恢复"""
         controller._on_add_item("工作项 #工作")
         controller._on_add_item("其他项")
         item = controller._todos[0]
         controller._on_tag_filter_clicked("工作")
         assert len(controller._filtered_items()) == 1
         controller._on_title_changed(item.id, "改名 #生活")
-        assert controller._filtered_items() == []
-        # 视图也应同步刷新：残留卡片不再显示在列表里
-        assert controller._expanded_view._items == []
+        # "工作" 标签已整体消失 → 筛选自动复位，列表恢复显示全部活跃条目
+        assert controller._active_tag == ""
+        assert len(controller._filtered_items()) == 2
+        # 视图同步刷新：剩余卡片正常显示（而非误导性空态）
+        assert len(controller._expanded_view._items) == 2
 
 
 class TestControllerNotes:

@@ -151,9 +151,33 @@ class AppController(QObject):
 
         self._refresh_views()
 
+        # 数据文件损坏/不可读时明确告知用户（避免静默清零，用户无从抢救）
+        self._notify_store_problems()
+
         # 自动归档提示（每天最多一次，避免每次启动都打扰）
         if archived_count > 0:
             self._notify_auto_archive(archived_count)
+
+    def _notify_store_problems(self) -> None:
+        """启动加载数据文件出现损坏/不可读时提示用户
+
+        损坏文件已被隔离备份（带时间戳，保留多份），本次以空数据启动；
+        提示中给出可用的恢复途径（导出备份 / 导入快照）。
+        """
+        descriptions = []
+        for kind, path, _detail in (self._store.problems
+                                    + self._note_store.problems):
+            if kind == "corrupted":
+                descriptions.append(f"{path.name} 已损坏并隔离")
+            else:
+                descriptions.append(f"{path.name} 暂时无法读取")
+        self._store.problems.clear()
+        self._note_store.problems.clear()
+        if descriptions:
+            self._show_error(
+                f"数据文件异常（{'；'.join(descriptions)}），"
+                "本次以空数据启动。如有导出备份或导入快照，可从「备份」菜单恢复。")
+            logger.warning("数据文件加载异常已通知用户: %s", descriptions)
 
     def _notify_auto_archive(self, count: int) -> None:
         """提示自动归档结果（每天最多一次）"""
@@ -216,9 +240,14 @@ class AppController(QObject):
 
     def _refresh_views(self) -> None:
         """刷新所有视图（保持搜索/标签过滤状态）"""
+        # 校验：被筛选的标签已从所有活跃待办消失时复位，
+        # 避免标签行隐藏后过滤仍生效、主列表显示误导性空态且无法在 UI 内恢复
+        tags = self._collect_tags()
+        if self._active_tag and self._active_tag not in tags:
+            self._active_tag = ""
         filtered = self._filtered_items()
         self._expanded_view.refresh(filtered, self._search_query)
-        self._expanded_view.update_tag_filters(self._collect_tags(), self._active_tag)
+        self._expanded_view.update_tag_filters(tags, self._active_tag)
 
         # 更新计数
         active_count = len([t for t in self._todos if t.is_active])
@@ -504,10 +533,12 @@ class AppController(QObject):
     def _on_show_archive(self) -> None:
         """显示归档对话框"""
         dialog = ArchiveDialog(self._archived, self._window)
-        dialog.signal_restore_item.connect(self._on_restore_item)
+        dialog.signal_restore_item.connect(
+            lambda item_id, d=dialog: self._on_restore_item(item_id, d))
         dialog.exec()
 
-    def _on_restore_item(self, item_id: str) -> None:
+    def _on_restore_item(self, item_id: str,
+                         dialog: ArchiveDialog | None = None) -> None:
         """从归档恢复到待办列表"""
         try:
             restored = self._store.restore_item(item_id)
@@ -515,8 +546,14 @@ class AppController(QObject):
                 self._todos = self._store.load_todos()
                 self._archived = self._store.load_archived()
                 self._schedule_save()
+                # 恢复是原地 append（列表对象不变），id() 身份判定不会触发索引重建
+                self._invalidate_search_index()
                 self._refresh_views()
+                if dialog:
+                    dialog.remove_item(item_id)
                 self._show_notification(f"已恢复：{restored.title[:20]}")
+            else:
+                self._show_notification("该条目已不在归档中")
         except StoreError as e:
             self._show_error(f"恢复失败: {e}")
 

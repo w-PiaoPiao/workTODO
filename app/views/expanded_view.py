@@ -525,6 +525,13 @@ class ExpandedView(QFrame):
                 card.update_item(item)
             else:
                 card = self._create_card(item)
+            # 数据刷新会重置进度展开态；当前记录为展开中的卡片需恢复，
+            # 避免展开态与记录脱节（刷新后自动收起但状态机仍记为展开）
+            if self._progress_expanded_card_id == item.id:
+                try:
+                    card.expand_progress()
+                except RuntimeError:
+                    pass
             shown_ids.add(item.id)
             card_order.append(card)
 
@@ -723,15 +730,16 @@ class ExpandedView(QFrame):
 
     # ── 置顶动画 ────────────────────────────────────────
 
+    # 动画时长随位移衰减：dist≤150px 走满 300ms，dist≥500px 走底 90ms
+    _STICKY_ANIM_MAX_MS = 300
+    _STICKY_ANIM_MIN_MS = 90
+    _STICKY_ANIM_DIST_MS = 500     # 达到此位移(像素)时取最短时长
+
     def animate_sticky(self, item_id: str, todos: list[TodoItem]) -> None:
         """置顶切换动画：卡片从当前位置飞入列表顶部"""
-        # 清理前序动画（防止快速连续点击导致幽灵泄漏）
-        if hasattr(self, '_sticky_anim') and self._sticky_anim:
-            try:
-                self._sticky_anim.stop()
-            except RuntimeError:
-                pass
-            self._sticky_anim = None
+        # 清理前序动画与幽灵图层（快速连续点击时 stop() 不发射 finished，
+        # 只挂 finished 的清理会漏掉，幽灵截图将永久残留屏幕）
+        self._cleanup_sticky_anim()
 
         # 记录旧卡片位置（refresh 会销毁旧卡片）
         old_card = self._find_card(item_id)
@@ -762,13 +770,39 @@ class ExpandedView(QFrame):
 
         # 动画：从旧位置飞到新位置
         anim = QPropertyAnimation(ghost, b"geometry")
-        anim.setDuration(int(300 * min(1.0, vertical_dist / 500 + 0.3)))
+        ratio = min(1.0, vertical_dist / self._STICKY_ANIM_DIST_MS)
+        anim.setDuration(
+            int(self._STICKY_ANIM_MIN_MS
+                + (self._STICKY_ANIM_MAX_MS - self._STICKY_ANIM_MIN_MS)
+                * (1.0 - ratio)))
         anim.setEasingCurve(QEasingCurve.OutCubic)
         anim.setStartValue(old_geo)
         anim.setEndValue(new_geo)
-        anim.finished.connect(lambda: ghost.deleteLater())
+        anim.finished.connect(ghost.deleteLater)
+        anim.finished.connect(self._on_sticky_anim_finished)
         anim.start()
         self._sticky_anim = anim
+        self._sticky_ghost = ghost
+
+    def _cleanup_sticky_anim(self) -> None:
+        """清理进行中的置顶动画与幽灵图层（stop() 不触发 finished，需显式清理）"""
+        if getattr(self, "_sticky_anim", None):
+            try:
+                self._sticky_anim.stop()
+            except RuntimeError:
+                pass
+        if getattr(self, "_sticky_ghost", None):
+            try:
+                self._sticky_ghost.deleteLater()
+            except RuntimeError:
+                pass
+        self._sticky_anim = None
+        self._sticky_ghost = None
+
+    def _on_sticky_anim_finished(self) -> None:
+        """动画自然完成：解除引用（幽灵已由 finished → deleteLater 清理）"""
+        self._sticky_anim = None
+        self._sticky_ghost = None
 
     # ── 页脚 ──────────────────────────────────────────────
 
