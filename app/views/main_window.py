@@ -60,6 +60,7 @@ class MainWindow(QWidget):
         self._drag_pos = QPoint()
         self._is_dragging = False
         self._animation_running = False
+        self._expanding = False  # expand() 约束设置→动画结束期间为 True，屏蔽中间态 resize
         self._expand_anchor = "top_left"  # 最近一次展开的锚点（折叠时反向收缩）
 
         # ── 贴顶隐藏状态 ──────────────────────────────────
@@ -105,7 +106,7 @@ class MainWindow(QWidget):
 
         # ── 默认尺寸 ──────────────────────────────────────
         self._collapsed_size = QSize(AppConfig.PET_WIDTH, AppConfig.PET_HEIGHT)
-        self._expanded_size = QSize(AppConfig.EXPANDED_WIDTH, AppConfig.EXPANDED_HEIGHT)
+        self._expanded_size = self._load_expanded_size()
 
         # ── 初始位置（右上角） ────────────────────────────
         self._move_to_default_position()
@@ -160,10 +161,13 @@ class MainWindow(QWidget):
         if self._stuck_to_top:
             self._full_unstick()
             self.move(self._restore_rect.topLeft())
+        # 记忆尺寸钳制到当前屏幕（换显示器/改分辨率自适应）
+        target = self._effective_expanded_size()
         # 选择展开锚点（右侧/下方受限时锚定对应边缘，向屏幕内侧展开，不瞬移）
-        self._expand_anchor = self._choose_expand_anchor()
+        self._expand_anchor = self._choose_expand_anchor(target)
         base_geo = self.geometry()  # 桌宠态矩形（改尺寸约束前记录）
         self._mode = "expanded"
+        self._expanding = True  # 屏蔽 setMinimumSize 触发的中间态 resize
 
         # 先解除固定尺寸，再切换视图，最后动画展开
         self.setFixedSize(QSize(16777215, 16777215))
@@ -171,7 +175,7 @@ class MainWindow(QWidget):
         self.setMaximumSize(AppConfig.EXPANDED_MAX_WIDTH, AppConfig.EXPANDED_MAX_HEIGHT)
         self._stack.setCurrentWidget(self._expanded_view)
         self._animate_size(
-            self._expanded_size.width(), self._expanded_size.height(),
+            target.width(), target.height(),
             anchor=self._expand_anchor, base_geo=base_geo)
         self.signal_mode_changed.emit("expanded")
 
@@ -223,6 +227,23 @@ class MainWindow(QWidget):
         # 双击切换模式的功能已由具体视图（CollapsedView / 标题栏）各自处理
         super().mouseDoubleClickEvent(event)
 
+    def resizeEvent(self, event) -> None:
+        """采集展开态用户调整的尺寸并即时持久化
+
+        守卫排除三类非用户 resize：
+        - 折叠态（mode 守卫）；
+        - 展开/折叠动画帧（_animation_running）；
+        - expand() 约束设置阶段 setMinimumSize 触发的中间态钳制（_expanding）。
+        QSettings setValue 为内存缓存惰性落盘，逐次写入开销可接受，
+        即时保存可覆盖"调整后直接托盘退出"（quit 不经 closeEvent）等路径。
+        """
+        if (self._mode == "expanded"
+                and not self._animation_running
+                and not self._expanding):
+            self._expanded_size = self.size()
+            AppConfig.settings().setValue("window/expanded_size", self._expanded_size)
+        super().resizeEvent(event)
+
     # ── 键盘事件 ──────────────────────────────────────────
 
     def keyPressEvent(self, event):
@@ -258,6 +279,7 @@ class MainWindow(QWidget):
 
     def _on_animation_finished(self) -> None:
         self._animation_running = False
+        self._expanding = False
 
         # 动画结束后，应用尺寸约束
         if self._mode == "collapsed":
@@ -266,7 +288,7 @@ class MainWindow(QWidget):
             self._set_pet_idle(True)
         # 展开模式不锁固定尺寸，允许用户拖拽缩放
 
-    def _choose_expand_anchor(self) -> str:
+    def _choose_expand_anchor(self, size: QSize) -> str:
         """根据桌宠位置选择展开锚点，保证面板完整可见且不瞬移。
 
         - 默认左上：向右下展开
@@ -279,7 +301,7 @@ class MainWindow(QWidget):
             return "top_left"
         geo = screen.availableGeometry()
         margin = AppConfig.SCREEN_MARGIN
-        w, h = self._expanded_size.width(), self._expanded_size.height()
+        w, h = size.width(), size.height()
 
         over_right = self.x() + w > geo.right() - margin
         over_bottom = self.y() + h > geo.bottom() - margin
@@ -295,6 +317,38 @@ class MainWindow(QWidget):
 
     def _apply_collapsed_size(self) -> None:
         self.setFixedSize(self._collapsed_size)
+
+    # ── 展开尺寸记忆 ──────────────────────────────────────
+
+    def _load_expanded_size(self) -> QSize:
+        """读取上次用户调整的展开尺寸；无记录/非法值回退默认尺寸
+
+        与 window/pos 同模式：isinstance 校验 + 配置上下限钳制，
+        防 QSettings 残留异常值或版本间配置变更。
+        """
+        settings = AppConfig.settings()
+        size = settings.value("window/expanded_size")
+        if isinstance(size, QSize):
+            w = max(AppConfig.EXPANDED_MIN_WIDTH,
+                    min(size.width(), AppConfig.EXPANDED_MAX_WIDTH))
+            h = max(AppConfig.EXPANDED_MIN_HEIGHT,
+                    min(size.height(), AppConfig.EXPANDED_MAX_HEIGHT))
+            return QSize(w, h)
+        return QSize(AppConfig.EXPANDED_WIDTH, AppConfig.EXPANDED_HEIGHT)
+
+    def _effective_expanded_size(self) -> QSize:
+        """本次展开实际使用的尺寸：记忆值钳制到当前屏幕可用区域与配置上下限"""
+        w = self._expanded_size.width()
+        h = self._expanded_size.height()
+        screen = self._current_screen()
+        if screen:
+            geo = screen.availableGeometry()
+            margin = AppConfig.SCREEN_MARGIN
+            w = min(w, geo.width() - margin * 2)
+            h = min(h, geo.height() - margin * 2)
+        w = max(AppConfig.EXPANDED_MIN_WIDTH, min(w, AppConfig.EXPANDED_MAX_WIDTH))
+        h = max(AppConfig.EXPANDED_MIN_HEIGHT, min(h, AppConfig.EXPANDED_MAX_HEIGHT))
+        return QSize(w, h)
 
     def _move_to_default_position(self) -> None:
         """恢复上次位置或置于屏幕右上角"""
