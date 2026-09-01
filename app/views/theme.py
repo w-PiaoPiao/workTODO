@@ -466,6 +466,22 @@ class AppTheme:
         """
 
     @classmethod
+    def progress_add_hint_style(cls) -> str:
+        """进度添加提示行（"＋ 添加进度..."，hover 变 accent）"""
+        C = cls.C
+        return f"""
+            QLabel {{
+                font: {cls.FONT["small"]};
+                color: {C["text_disabled"]};
+                padding: 2px 0;
+                background: transparent;
+            }}
+            QLabel:hover {{
+                color: {C["accent"]};
+            }}
+        """
+
+    @classmethod
     def edit_input_style(cls) -> str:
         """内联编辑输入框"""
         C = cls.C

@@ -4,8 +4,7 @@
 单个待办项的展示，包含：
 - 完成复选框（☐/☑）
 - 标题（双击编辑）
-- 进度历史列表
-- 添加进度输入
+- 进度历史列表（含行内就地添加进度）
 - 办结/删除按钮
 """
 
@@ -147,8 +146,10 @@ class TodoCard(QFrame):
         self._meta_row.addWidget(self._due_label)
         main_layout.addLayout(self._meta_row)
 
-        # ── 进度区域 ──────────────────────────────────────
+        # ── 进度区域（含行内就地添加进度，无常驻输入行） ──
         self._progress_widget = ProgressWidget()
+        self._progress_widget.signal_progress_added.connect(
+            lambda text: self.signal_progress_added.emit(self._item.id, text))
         self._progress_widget.signal_progress_edited.connect(
             lambda entry_id, new_text: self.signal_progress_edited.emit(
                 self._item.id, entry_id, new_text))
@@ -156,26 +157,6 @@ class TodoCard(QFrame):
             lambda entry_id: self.signal_progress_deleted.emit(
                 self._item.id, entry_id))
         main_layout.addWidget(self._progress_widget)
-
-        # ── 添加进度行 ────────────────────────────────────
-        progress_row = QHBoxLayout()
-        progress_row.setSpacing(4)
-        progress_row.setContentsMargins(0, 0, 0, 0)  # 无复选框，取消缩进
-
-        self._progress_input = QLineEdit()
-        self._progress_input.setPlaceholderText("添加进度...")
-        self._progress_input.setStyleSheet(AppTheme.progress_input_style())
-        self._progress_input.returnPressed.connect(self._on_progress_submit)
-
-        self._progress_btn = QPushButton("＋")
-        self._progress_btn.setFixedSize(20, 20)
-        self._progress_btn.setToolTip("添加进度")
-        self._progress_btn.setStyleSheet(AppTheme.icon_btn("12px"))
-        self._progress_btn.clicked.connect(self._on_progress_submit)
-
-        progress_row.addWidget(self._progress_input, stretch=1)
-        progress_row.addWidget(self._progress_btn)
-        main_layout.addLayout(progress_row)
 
         content.setLayout(main_layout)
         outer.addWidget(content, stretch=1)
@@ -195,10 +176,11 @@ class TodoCard(QFrame):
                 padding: 2px 0;
             """)
             self._complete_btn.setVisible(False)
-            self._progress_input.setVisible(False)
-            self._progress_btn.setVisible(False)
+            self._progress_widget.set_add_enabled(False)
             self._sticky_btn.setVisible(False)
             self._date_btn.setVisible(False)
+        else:
+            self._progress_widget.set_add_enabled(True)
 
         self._title_label.setFullText(item.title)
         # 卡片级别 tooltip：ElidedLabel 的 tooltip 因 WA_TransparentForMouseEvents 不可用，
@@ -377,12 +359,6 @@ class TodoCard(QFrame):
 
     # ── 文字溢出省略（由 ElidedLabel 内部 paintEvent 处理）──
 
-    def _on_progress_submit(self) -> None:
-        text = self._progress_input.text().strip()
-        if text:
-            self.signal_progress_added.emit(self._item.id, text)
-            self._progress_input.clear()
-
     def _start_edit(self) -> None:
         """双击标题进入内联编辑"""
         if self._editing or self._item.is_completed:
@@ -498,7 +474,7 @@ class TodoCard(QFrame):
         self._progress_widget.expand()
 
     def set_all_collapsed(self, collapsed: bool) -> None:
-        """全部卡片折叠模式：隐藏进度区域和添加进度行，仅保留标题行
+        """全部卡片折叠模式：隐藏进度区域（含行内添加入口），仅保留标题行
 
         收起前记忆进度区原可见性，恢复时按原状态还原，
         避免破坏用户对单张卡片进度的个体折叠状态。
@@ -506,13 +482,8 @@ class TodoCard(QFrame):
         if collapsed:
             self._progress_visible_before_collapse = self._progress_widget.isVisible()
             self._progress_widget.setVisible(False)
-            self._progress_input.setVisible(False)
-            self._progress_btn.setVisible(False)
         else:
             self._progress_widget.setVisible(self._progress_visible_before_collapse)
-            input_visible = not self._item.is_completed
-            self._progress_input.setVisible(input_visible)
-            self._progress_btn.setVisible(input_visible)
 
     def reapply_theme(self) -> None:
         """重新应用当前主题样式（主题切换时调用，无需重建卡片）"""
@@ -549,10 +520,6 @@ class TodoCard(QFrame):
         self._date_btn.setStyleSheet(AppTheme.icon_btn())
         self._sticky_btn.setStyleSheet(AppTheme.icon_btn())
         self._apply_action_icons()
-
-        # 进度输入区域
-        self._progress_input.setStyleSheet(AppTheme.progress_input_style())
-        self._progress_btn.setStyleSheet(AppTheme.icon_btn("12px"))
 
         # 截止日期徽标 / 标签 chips
         if item.due_date:
