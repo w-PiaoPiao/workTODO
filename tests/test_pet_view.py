@@ -28,6 +28,21 @@ def app():
 
 
 @pytest.fixture
+def ini_settings(monkeypatch, tmp_path):
+    """把 QSettings 重定向到临时 INI 文件（隔离真实注册表：展开尺寸记忆
+    window/expanded_size、窗口位置 window/pos 等会污染跨用例结果）"""
+    from PySide6.QtCore import QSettings as QtQSettings
+
+    path = tmp_path / "settings.ini"
+
+    def factory(*args, **kwargs):
+        return QtQSettings(str(path), QtQSettings.IniFormat)
+
+    monkeypatch.setattr("app.config.QSettings", factory)
+    return path
+
+
+@pytest.fixture
 def user_pets_dir(tmp_path, monkeypatch):
     """把用户素材目录指向 tmp_path，并放入一个自定义素材"""
     monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
@@ -128,7 +143,7 @@ def _mouse_event(type_, local, global_, button=Qt.LeftButton, buttons=Qt.LeftBut
         type_, local, global_, button, buttons, Qt.NoModifier)
 
 
-def test_drag_moves_window(app, tmp_path, monkeypatch):
+def test_drag_moves_window(app, tmp_path, monkeypatch, ini_settings):
     """拖拽事件必须转发到顶级窗口（回归：parentWidget 是 QStackedWidget 的 bug）"""
     monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
     from app.views.main_window import MainWindow
@@ -162,7 +177,8 @@ def test_drag_moves_window(app, tmp_path, monkeypatch):
     window.deleteLater()
 
 
-def test_click_within_threshold_expands_without_moving(app, tmp_path, monkeypatch):
+def test_click_within_threshold_expands_without_moving(app, tmp_path, monkeypatch,
+                                                       ini_settings):
     """单击（位移 ≤8px）触发展开信号且不移动窗口"""
     monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
     from app.views.main_window import MainWindow
@@ -369,7 +385,7 @@ def _wait_animation(app, window=None, ms=2000):
     app.processEvents()
 
 
-def _make_window(app, tmp_path, monkeypatch):
+def _make_window(app, tmp_path, monkeypatch, ini_settings):
     monkeypatch.setattr("app.config.AppConfig.DATA_DIR", tmp_path)
     from app.views.main_window import MainWindow
     window = MainWindow()
@@ -386,9 +402,9 @@ def _screen_geo(app, window):
     return screen.availableGeometry()
 
 
-def test_expand_at_right_edge_anchors_right(app, tmp_path, monkeypatch):
+def test_expand_at_right_edge_anchors_right(app, tmp_path, monkeypatch, ini_settings):
     """回归：桌宠贴右边缘展开 → 右上锚点，向左下展开，右边缘保持原位"""
-    window = _make_window(app, tmp_path, monkeypatch)
+    window = _make_window(app, tmp_path, monkeypatch, ini_settings)
     geo = _screen_geo(app, window)
     window.move(geo.right() - window.width(), geo.top() + 40)
     app.processEvents()
@@ -405,9 +421,10 @@ def test_expand_at_right_edge_anchors_right(app, tmp_path, monkeypatch):
     window.deleteLater()
 
 
-def test_expand_at_bottom_edge_anchors_bottom(app, tmp_path, monkeypatch):
+def test_expand_at_bottom_edge_anchors_bottom(app, tmp_path, monkeypatch,
+                                              ini_settings):
     """回归：桌宠贴底边缘展开 → 左下锚点，向右上展开，下边缘保持原位"""
-    window = _make_window(app, tmp_path, monkeypatch)
+    window = _make_window(app, tmp_path, monkeypatch, ini_settings)
     geo = _screen_geo(app, window)
     window.move(geo.left() + 40, geo.bottom() - window.height())
     app.processEvents()
@@ -424,9 +441,9 @@ def test_expand_at_bottom_edge_anchors_bottom(app, tmp_path, monkeypatch):
     window.deleteLater()
 
 
-def test_expand_at_corner_anchors_corner(app, tmp_path, monkeypatch):
+def test_expand_at_corner_anchors_corner(app, tmp_path, monkeypatch, ini_settings):
     """回归：桌宠贴右下角展开 → 右下锚点，向左上展开，两边缘均保持"""
-    window = _make_window(app, tmp_path, monkeypatch)
+    window = _make_window(app, tmp_path, monkeypatch, ini_settings)
     geo = _screen_geo(app, window)
     window.move(geo.right() - window.width(),
                 geo.bottom() - window.height())
@@ -445,9 +462,9 @@ def test_expand_at_corner_anchors_corner(app, tmp_path, monkeypatch):
     window.deleteLater()
 
 
-def test_expand_center_not_moved(app, tmp_path, monkeypatch):
-    """回归：桌宠在屏幕中央（展开后不越界）时展开不移动位置"""
-    window = _make_window(app, tmp_path, monkeypatch)
+def test_expand_center_not_moved(app, tmp_path, monkeypatch, ini_settings):
+    """回归：桌宠在屏幕中央（默认展开尺寸不越界）时展开不移动位置"""
+    window = _make_window(app, tmp_path, monkeypatch, ini_settings)
     geo = _screen_geo(app, window)
     window.move(
         (geo.width() - AppConfig.EXPANDED_WIDTH) // 2,
@@ -464,9 +481,10 @@ def test_expand_center_not_moved(app, tmp_path, monkeypatch):
     window.deleteLater()
 
 
-def test_collapse_returns_to_original_position(app, tmp_path, monkeypatch):
+def test_collapse_returns_to_original_position(app, tmp_path, monkeypatch,
+                                               ini_settings):
     """回归：右边缘展开后折叠，用同一锚点收缩回桌宠原位"""
-    window = _make_window(app, tmp_path, monkeypatch)
+    window = _make_window(app, tmp_path, monkeypatch, ini_settings)
     geo = _screen_geo(app, window)
     original = geo.right() - window.width(), geo.top() + 40
     window.move(*original)
@@ -479,5 +497,147 @@ def test_collapse_returns_to_original_position(app, tmp_path, monkeypatch):
 
     assert window.mode == "collapsed"
     assert window.pos() == QPoint(*original)
+    window.close()
+    window.deleteLater()
+
+
+# ── 展开尺寸记忆 + 完整可见（回归）────────────────────────
+
+
+def _set_memory_size(ini_settings, w, h):
+    """写入展开尺寸记忆（模拟用户上次拉大面板；QSettings 已被隔离到 ini）"""
+    from PySide6.QtCore import QSize
+
+    from app.config import AppConfig
+
+    AppConfig.settings().setValue("window/expanded_size", QSize(w, h))
+
+
+def _assert_on_screen(window, geo):
+    """断言窗口完整落在屏幕可用区域内"""
+    g = window.geometry()
+    assert g.left() >= geo.left(), f"left {g.left()} < {geo.left()}"
+    assert g.top() >= geo.top(), f"top {g.top()} < {geo.top()}"
+    assert g.right() <= geo.right(), f"right {g.right()} > {geo.right()}"
+    assert g.bottom() <= geo.bottom(), f"bottom {g.bottom()} > {geo.bottom()}"
+
+
+def test_expand_memory_tall_at_center_stays_visible(app, tmp_path, monkeypatch,
+                                                    ini_settings):
+    """回归：上次把展开面板拉很高（记忆尺寸 > 当前屏幕高）后折叠并拖到屏幕
+    中央再展开 → 面板必须完整可见，不得被顶出屏幕（上半部分截断）"""
+    window = _make_window(app, tmp_path, monkeypatch, ini_settings)
+    geo = _screen_geo(app, window)
+    tall = min(2000, AppConfig.EXPANDED_MAX_HEIGHT)
+    wide = min(1000, AppConfig.EXPANDED_MAX_WIDTH)
+    _set_memory_size(ini_settings, wide, tall)
+
+    # 桌宠放屏幕中央（旧逻辑会判定 bottom_right 锚点 → 向左上顶出屏幕）
+    window.move(geo.center().x() - window.width() // 2,
+                geo.center().y() - window.height() // 2)
+    app.processEvents()
+    before = window.pos()
+
+    window.expand()
+    _wait_animation(app, window)
+
+    assert window.mode == "expanded"
+    # 完整可见：不被顶出屏幕（bug 场景：顶部/左侧大量超出）
+    _assert_on_screen(window, geo)
+    # 面板尺寸生效（被屏幕钳制）
+    assert window.height() <= geo.height()
+    assert window.pos() != before  # 中部位置无法容纳大面板，必然移动
+    window.close()
+    window.deleteLater()
+
+
+def test_expand_memory_tall_at_top_keeps_top_inside(app, tmp_path, monkeypatch,
+                                                   ini_settings):
+    """回归：记忆尺寸超高且桌宠贴屏幕顶 → 展开面板不能向上顶出屏幕"""
+    window = _make_window(app, tmp_path, monkeypatch, ini_settings)
+    geo = _screen_geo(app, window)
+    tall = min(2000, AppConfig.EXPANDED_MAX_HEIGHT)
+    _set_memory_size(ini_settings, 500, tall)
+
+    window.move(geo.left() + 40, geo.top() + 6)  # 贴顶（距顶 6px）
+    app.processEvents()
+    top_before = window.geometry().top()
+
+    window.expand()
+    _wait_animation(app, window)
+
+    assert window.mode == "expanded"
+    assert window.geometry().top() == top_before  # 上缘锚定不动（无瞬移）
+    _assert_on_screen(window, geo)
+    window.close()
+    window.deleteLater()
+
+
+def test_expand_memory_tall_keeps_right_edge_at_edge(app, tmp_path, monkeypatch,
+                                                    ini_settings):
+    """回归：记忆尺寸较大且桌宠贴右缘 → 右缘锚定（面板向左侧展开不越界）"""
+    window = _make_window(app, tmp_path, monkeypatch, ini_settings)
+    geo = _screen_geo(app, window)
+    wide = min(1200, AppConfig.EXPANDED_MAX_WIDTH)
+    tall = min(2000, AppConfig.EXPANDED_MAX_HEIGHT)
+    _set_memory_size(ini_settings, wide, tall)
+
+    window.move(geo.right() - window.width(), geo.top() + 40)
+    app.processEvents()
+    before_right = window.geometry().right()
+
+    window.expand()
+    _wait_animation(app, window)
+
+    assert window.mode == "expanded"
+    assert window.geometry().right() == before_right  # 右缘不动，无瞬移
+    _assert_on_screen(window, geo)
+    window.close()
+    window.deleteLater()
+
+
+def test_expand_memory_tall_at_bottom_keeps_bottom_inside(app, tmp_path,
+                                                          monkeypatch,
+                                                          ini_settings):
+    """回归：记忆尺寸超高且桌宠贴屏幕底 → 面板不得向下顶出屏幕"""
+    window = _make_window(app, tmp_path, monkeypatch, ini_settings)
+    geo = _screen_geo(app, window)
+    tall = min(2000, AppConfig.EXPANDED_MAX_HEIGHT)
+    _set_memory_size(ini_settings, 500, tall)
+
+    window.move(geo.left() + 40, geo.bottom() - window.height())
+    app.processEvents()
+    bottom_before = window.geometry().bottom()
+
+    window.expand()
+    _wait_animation(app, window)
+
+    assert window.mode == "expanded"
+    assert window.geometry().bottom() == bottom_before  # 底缘锚定不动（无瞬移）
+    _assert_on_screen(window, geo)
+    window.close()
+    window.deleteLater()
+
+
+def test_collapse_after_clamped_expand_returns_home(app, tmp_path, monkeypatch,
+                                                    ini_settings):
+    """回归：大记忆尺寸中部展开（面板上移）后再折叠 → 桌宠回到原位（可逆）"""
+    window = _make_window(app, tmp_path, monkeypatch, ini_settings)
+    geo = _screen_geo(app, window)
+    tall = min(2000, AppConfig.EXPANDED_MAX_HEIGHT)
+    _set_memory_size(ini_settings, 500, tall)
+
+    home = (geo.left() + 40, geo.top() + 40)
+    window.move(*home)
+    app.processEvents()
+
+    window.expand()
+    _wait_animation(app, window)
+    assert window.mode == "expanded"
+    window.collapse()
+    _wait_animation(app, window)
+
+    assert window.mode == "collapsed"
+    assert window.pos() == QPoint(*home)  # 折叠移回与展开相反的位移
     window.close()
     window.deleteLater()

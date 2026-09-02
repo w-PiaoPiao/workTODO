@@ -61,7 +61,7 @@ class MainWindow(QWidget):
         self._is_dragging = False
         self._animation_running = False
         self._expanding = False  # expand() 约束设置→动画结束期间为 True，屏蔽中间态 resize
-        self._expand_anchor = "top_left"  # 最近一次展开的锚点（折叠时反向收缩）
+        self._expand_delta = QPoint()  # 本次展开的左上角位移（折叠时反向移回原位）
 
         # ── 贴顶隐藏状态 ──────────────────────────────────
         self._stuck_to_top = False         # 是否处于贴顶模式
@@ -163,9 +163,12 @@ class MainWindow(QWidget):
             self.move(self._restore_rect.topLeft())
         # 记忆尺寸钳制到当前屏幕（换显示器/改分辨率自适应）
         target = self._effective_expanded_size()
-        # 选择展开锚点（右侧/下方受限时锚定对应边缘，向屏幕内侧展开，不瞬移）
-        self._expand_anchor = self._choose_expand_anchor(target)
+        screen = self._current_screen()
         base_geo = self.geometry()  # 桌宠态矩形（改尺寸约束前记录）
+        # 展开矩形：在完整可见的前提下尽量少位移（需要时整窗内移/回拉越界边）。
+        # 桌宠贴着屏幕边缘时该边自然保持原位（与约束解除前几何重合），锚定边缘不瞬移。
+        self._expand_delta = self._visible_expand_delta(
+            base_geo, target, screen)
         self._mode = "expanded"
         self._expanding = True  # 屏蔽 setMinimumSize 触发的中间态 resize
 
@@ -176,7 +179,7 @@ class MainWindow(QWidget):
         self._stack.setCurrentWidget(self._expanded_view)
         self._animate_size(
             target.width(), target.height(),
-            anchor=self._expand_anchor, base_geo=base_geo)
+            delta=self._expand_delta, base_geo=base_geo)
         self.signal_mode_changed.emit("expanded")
 
     def collapse(self) -> None:
@@ -192,10 +195,10 @@ class MainWindow(QWidget):
         self.setMaximumSize(16777215, 16777215)
         self.setMinimumSize(0, 0)
         self.setFixedSize(QSize(16777215, 16777215))
-        # 用与展开相同的锚点反向收缩 → 桌宠回到原位，可逆无瞬移
+        # 反向移动上次展开的位移 → 桌宠回到原位，展开/折叠可逆
         self._animate_size(
             self._collapsed_size.width(), self._collapsed_size.height(),
-            anchor=self._expand_anchor, base_geo=base_geo)
+            delta=-self._expand_delta, base_geo=base_geo)
         self.signal_mode_changed.emit("collapsed")
 
     # ── 窗口拖拽 ──────────────────────────────────────────
@@ -255,11 +258,13 @@ class MainWindow(QWidget):
     # ── 动画 ──────────────────────────────────────────────
 
     def _animate_size(self, target_w: int, target_h: int,
-                      anchor: str = "top_left", base_geo: QRect | None = None) -> None:
-        """带动画改变窗口大小，指定固定不动的锚点角。
+                      delta: QPoint | None = None,
+                      base_geo: QRect | None = None) -> None:
+        """带动画改变窗口大小，左上角同时移动 delta（负值=向左/上）。
 
-        base_geo：锚点计算的基准矩形（必须是改尺寸约束前的几何，
+        base_geo：目标几何计算的基准矩形（必须是改尺寸约束前的几何，
         因为 setMinimumSize 等会触发中间态 resize，基于中间态计算会错位）。
+        展开/折叠互为逆操作（delta 相反 + 相同尺寸变化）→ 可逆无瞬移。
         """
         self._animation_running = True
         self.anim = QPropertyAnimation(self, b"geometry")
@@ -267,11 +272,10 @@ class MainWindow(QWidget):
         self.anim.setEasingCurve(QEasingCurve.OutCubic)
 
         base = base_geo if base_geo is not None else self.geometry()
-        x, y = base.x(), base.y()
-        if anchor in ("top_right", "bottom_right"):
-            x = base.x() + base.width() - target_w
-        if anchor in ("bottom_left", "bottom_right"):
-            y = base.y() + base.height() - target_h
+        dx = delta.x() if delta is not None else 0
+        dy = delta.y() if delta is not None else 0
+        x = base.x() + dx
+        y = base.y() + dy
         self.anim.setStartValue(self.geometry())
         self.anim.setEndValue(QRect(x, y, target_w, target_h))
         self.anim.finished.connect(self._on_animation_finished)
@@ -288,30 +292,45 @@ class MainWindow(QWidget):
             self._set_pet_idle(True)
         # 展开模式不锁固定尺寸，允许用户拖拽缩放
 
-    def _choose_expand_anchor(self, size: QSize) -> str:
-        """根据桌宠位置选择展开锚点，保证面板完整可见且不瞬移。
+    def _visible_expand_delta(self, pet_geo: QRect, target: QSize,
+                              screen: QScreen | None) -> QPoint:
+        """计算展开时左上角需要的位移，保证展开面板完整落在屏幕可用区域内。
 
-        - 默认左上：向右下展开
-        - 右侧受限：锚定右上角，向左下展开
-        - 下方受限：锚定左下角，向右上展开
-        - 双侧受限：锚定右下角，向左上展开
+        逐轴独立处理（先水平后垂直）：
+        - 方向默认"同左上角展开"（dx=0 / dy=0），未越界就不动；
+        - 展开矩形越出右缘/下缘（记忆尺寸大而桌宠在屏幕内部）时，优先锚定
+          桌宠对应边缘（面板边缘与桌宠边缘重合，贴边展开无瞬移，与原逻辑一致）；
+          若锚定后仍会顶出对侧（目标比桌宠到对侧的空间还大）→ 改为贴屏幕
+          边缘留 SCREEN_MARGIN 展开——完整可见优先；
+        - 桌宠矩形本身已悬出屏幕（换显示器等异常位置）→ 拉回屏幕内留边距。
+
+        目标尺寸已被 _effective_expanded_size 钳制到可用区减去双边距
+        （≤ geo 轴长 - 2*margin），故任一钳制结果都完整落在可用区内；
+        折叠时按相反位移移动即可回到桌宠原位，展开/折叠可逆。
         """
-        screen = self._current_screen()
-        if not screen:
-            return "top_left"
-        geo = screen.availableGeometry()
         margin = AppConfig.SCREEN_MARGIN
-        w, h = size.width(), size.height()
-
-        over_right = self.x() + w > geo.right() - margin
-        over_bottom = self.y() + h > geo.bottom() - margin
-        if over_right and over_bottom:
-            return "bottom_right"
-        if over_right:
-            return "top_right"
-        if over_bottom:
-            return "bottom_left"
-        return "top_left"
+        x = pet_geo.x()
+        y = pet_geo.y()
+        if screen is not None:
+            geo = screen.availableGeometry()
+            tw, th = target.width(), target.height()
+            if pet_geo.left() < geo.left():  # 桌宠悬出左界 → 拉回留边距
+                x = geo.left() + margin
+            elif pet_geo.left() + tw > geo.right() - margin:  # 右侧放不下
+                anchor_x = pet_geo.right() + 1 - tw  # 面板右缘与桌宠右缘重合
+                if anchor_x >= geo.left() + margin:
+                    x = anchor_x
+                else:  # 锚定会顶出左界 → 贴屏幕右缘留边距
+                    x = geo.right() - margin - tw + 1
+            if pet_geo.top() < geo.top():  # 桌宠悬出上界 → 拉回留边距
+                y = geo.top() + margin
+            elif pet_geo.top() + th > geo.bottom() - margin:  # 下方放不下
+                anchor_y = pet_geo.bottom() + 1 - th  # 面板底缘与桌宠底缘重合
+                if anchor_y >= geo.top() + margin:
+                    y = anchor_y
+                else:  # 锚定会顶出上界 → 贴屏幕底缘留边距
+                    y = geo.bottom() - margin - th + 1
+        return QPoint(x - pet_geo.x(), y - pet_geo.y())
 
     # ── 窗口管理 ──────────────────────────────────────────
 
