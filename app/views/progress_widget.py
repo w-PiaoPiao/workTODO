@@ -2,7 +2,8 @@
 进度条目展示组件
 
 始终只显示最新一条进度，点击展开显示全部，点击其他地方收起。
-展开模式下每条进度支持双击编辑（弹出输入框）和删除操作。
+折叠模式最新一条与展开模式每条进度均支持双击行内就地编辑
+（原行原地变为同高度输入框，与标题编辑交互一致）。
 
 添加进度采用行内就地编辑：点击最新进度行右侧悬浮的"＋"或
 空进度提示行"＋ 添加进度..."，原行原地变为同高度输入框，
@@ -16,7 +17,6 @@ from collections.abc import Callable
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -94,6 +94,19 @@ class _AddInput(QLineEdit):
         super().keyPressEvent(event)
 
 
+class _EditInput(QLineEdit):
+    """进度编辑输入框：Esc 触发取消（editingFinished 不覆盖 Esc）"""
+
+    esc_pressed = Signal()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key_Escape:
+            self.esc_pressed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class _HoverRow(QWidget):
     """进度行容器：鼠标进入时按条件揭示控件（如"＋"按钮），离开时隐藏
 
@@ -118,7 +131,7 @@ class _HoverRow(QWidget):
 
 
 class ProgressWidget(QWidget):
-    """进度条目列表 — 点击展开/收起，展开模式支持编辑和删除，行内就地添加"""
+    """进度条目列表 — 点击展开/收起，条目支持双击就地编辑和删除，行内就地添加"""
 
     signal_show_all_changed = Signal(bool)
     signal_progress_added = Signal(str)  # 新进度文本（item_id 由 TodoCard 包装）
@@ -131,6 +144,7 @@ class ProgressWidget(QWidget):
         self._show_all = False
         self._add_enabled = True
         self._add_input: _AddInput | None = None  # 当前添加模式的输入框
+        self._edit_input: _EditInput | None = None  # 当前编辑模式的输入框
         self._generation = 0  # 行重建代数：提交后判断是否已被外部刷新重建
         self._build_ui()
         self._refresh()  # 默认渲染空状态（有 entries 时由 set_entries 覆盖）
@@ -182,6 +196,7 @@ class ProgressWidget(QWidget):
         """清空布局中所有行"""
         self._generation += 1
         self._add_input = None  # 行被重建时添加模式随之失效
+        self._edit_input = None  # 行被重建时编辑模式随之失效
         while self._layout.count():
             item = self._layout.takeAt(0)
             widget = item.widget()
@@ -219,7 +234,8 @@ class ProgressWidget(QWidget):
 
         row = _HoverRow(
             add_btn,
-            lambda: self._add_enabled and self._add_input is None,
+            lambda: (self._add_enabled and self._add_input is None
+                     and self._edit_input is None),
         )
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -239,11 +255,21 @@ class ProgressWidget(QWidget):
         """)
         time_label.setMinimumWidth(50)
 
-        text_label = ElidedLabel(entry.text)
+        text_label = ClickableElidedLabel(entry.text)
+        text_label._on_double_click = lambda e, lbl=text_label: (
+            self._on_edit_entry(entry.id, lbl, e))
         text_label.setStyleSheet(f"""
-            font: {AppTheme.FONT["small"]};
-            color: {AppTheme.C["text_secondary"]};
-            background: transparent;
+            ClickableElidedLabel {{
+                font: {AppTheme.FONT["small"]};
+                color: {AppTheme.C["text_secondary"]};
+                background: transparent;
+                padding: 1px 2px;
+                border: 1px solid transparent;
+                border-radius: 2px;
+            }}
+            ClickableElidedLabel:hover {{
+                border: 1px solid {AppTheme.C["accent"]};
+            }}
         """)
 
         layout.addWidget(time_label)
@@ -286,7 +312,8 @@ class ProgressWidget(QWidget):
 
     def _on_add_button_clicked(self) -> None:
         """点击折叠行的"＋"：最新进度行就地进入添加模式"""
-        if not self._add_enabled or self._add_input is not None:
+        if (not self._add_enabled or self._add_input is not None
+                or self._edit_input is not None):
             return
         row_item = self._layout.itemAt(0)
         if row_item is None:
@@ -296,6 +323,7 @@ class ProgressWidget(QWidget):
     def _enter_add_mode_in_row(self, row: QWidget | None) -> None:
         """将指定行就地变为添加模式：隐藏展示控件，原位插入同高度输入框"""
         if (not self._add_enabled or self._add_input is not None
+                or self._edit_input is not None
                 or row is None or row.layout() is None):
             return
 
@@ -364,8 +392,8 @@ class ProgressWidget(QWidget):
         time_label.setMinimumWidth(50)
 
         text_label = ClickableElidedLabel(entry.text)
-        text_label._on_double_click = lambda e: self._on_edit_entry(text_label, e)
-        text_label.setProperty("entry_id", entry.id)
+        text_label._on_double_click = lambda e, lbl=text_label: (
+            self._on_edit_entry(entry.id, lbl, e))
         text_label.setStyleSheet(f"""
             ClickableElidedLabel {{
                 font: {AppTheme.FONT["small"]};
@@ -393,39 +421,75 @@ class ProgressWidget(QWidget):
         row.setLayout(layout)
         return row
 
-    # ── 编辑交互 ──────────────────────────────────────────
+    # ── 行内编辑模式 ──────────────────────────────────────
 
-    def _on_edit_entry(self, text_label: ClickableElidedLabel, event) -> None:
-        """双击进度文本 → 弹出输入框编辑"""
-        entry_id = text_label.property("entry_id")
-        if not entry_id:
-            event.accept()
-            return
-
-        # 找到对应的 ProgressEntry
+    def _on_edit_entry(self, entry_id: str, label: QWidget, event) -> None:
+        """双击进度文本 → 原行就地进入编辑模式（与标题编辑交互一致）"""
         entry = next((p for p in self._entries if p.id == entry_id), None)
-        if not entry:
+        if (entry is None or self._edit_input is not None
+                or self._add_input is not None):
             event.accept()
             return
 
-        # 弹出编辑对话框（QInputDialog 进入嵌套事件循环，此时搜索防抖定时器等可能触发并销毁卡片）
-        new_text, ok = QInputDialog.getText(
-            self.window() or self,
-            "编辑进度",
-            "进度内容：",
-            QLineEdit.Normal,
-            entry.text,
-        )
-        if ok and new_text.strip() and new_text.strip() != entry.text:
-            try:
-                # 防御：嵌套事件循环期间 text_label 可能已被 deleteLater 销毁
-                text_label.setFullText(new_text.strip())
-                self.signal_progress_edited.emit(entry_id, new_text.strip())
-            except RuntimeError:
-                # widget 已被销毁，由控制器后续的 _refresh_views 刷新
-                pass
+        # 双击所在行：折叠模式为最新进度行，展开模式为对应条目行
+        row = self._row_of_label(label)
+        if row is None:
+            event.accept()
+            return
 
+        inp = _EditInput(entry.text)
+        inp._entry_id = entry_id  # 提交时定位条目（行重建后 label 可能已销毁）
+        inp.setStyleSheet(AppTheme.progress_input_style())
+        inp.setToolTip("Enter 提交，Esc 取消")
+        inp.editingFinished.connect(self._commit_edit)
+        inp.esc_pressed.connect(self._cancel_edit)
+        self._edit_input = inp
+
+        layout = row.layout()
+        for i in range(layout.count()):
+            w = layout.itemAt(i).widget()
+            if w is not None:
+                w.setVisible(False)
+        layout.insertWidget(0, inp, stretch=1)
+        inp.setFocus()
         event.accept()
+
+    def _row_of_label(self, label: QWidget) -> QWidget | None:
+        """定位 label 所在的进度行 widget（直接父级即行容器）"""
+        try:
+            row = label.parentWidget()
+        except RuntimeError:
+            return None
+        if row is not None and row.layout() is not None:
+            return row
+        return None
+
+    def _commit_edit(self) -> None:
+        """提交编辑（Enter / 失焦触发）；空文本或未变更静默退出"""
+        inp = self._edit_input
+        if inp is None:
+            return
+        entry_id = getattr(inp, "_entry_id", "")
+        text = inp.text().strip()
+        self._edit_input = None
+
+        entry = next((p for p in self._entries if p.id == entry_id), None)
+        if not text or entry is None or text == entry.text:
+            self._refresh()
+            return
+
+        gen = self._generation
+        self.signal_progress_edited.emit(entry_id, text)
+        # emit 链路中的数据刷新可能已重建行（generation 变化），避免二次重建
+        if self._generation == gen:
+            self._refresh()
+
+    def _cancel_edit(self) -> None:
+        """取消编辑模式（Esc / 程序化重建），恢复显示"""
+        if self._edit_input is None:
+            return
+        self._edit_input = None
+        self._refresh()
 
     # ── 删除交互 ──────────────────────────────────────────
 
