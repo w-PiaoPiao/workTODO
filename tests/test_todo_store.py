@@ -26,13 +26,50 @@ class TestTodoStore:
         todos = store.load_todos()
         assert len(todos) == 1
         assert todos[0].title == "新待办"
-        assert todos[0].position > 0
+        assert todos[0].position == 0
 
     def test_add_multiple(self, store):
         for i in range(3):
             store.add_item(TodoItem(title=f"待办{i}"))
         todos = store.load_todos()
         assert len(todos) == 3
+
+    def test_add_item_inserts_below_sticky_block(self, store):
+        """新增待办插到置顶块下方的最上方（而非列表最下方）
+
+        展示排序契约（expanded_view.refresh）：
+        (not sticky, position, created_at)
+        """
+        first = TodoItem(title="第一条")
+        second = TodoItem(title="第二条")
+        store.add_item(first)
+        store.add_item(second)
+        store.add_item(TodoItem(title="置顶项", sticky=True))
+
+        store.add_item(TodoItem(title="新待办"))
+
+        display = sorted(
+            store.load_todos(),
+            key=lambda i: (not i.sticky, i.position, i.created_at))
+        assert [t.title for t in display] == [
+            "置顶项", "新待办", "第二条", "第一条"]
+
+    def test_add_item_keeps_sticky_positions(self, store):
+        """新增不打扰置顶项的 position"""
+        top = TodoItem(title="置顶项", sticky=True)
+        store.add_item(top)
+        store.add_item(TodoItem(title="普通1"))
+        before = top.position
+        store.add_item(TodoItem(title="普通2"))
+        assert top.position == before
+
+    def test_add_item_keeps_non_sticky_positions_unique(self, store):
+        """新增后全部 position 保持唯一（非置顶整体后移腾位）"""
+        for i in range(3):
+            store.add_item(TodoItem(title=f"旧{i}"))
+        store.add_item(TodoItem(title="新待办"))
+        positions = [i.position for i in store.load_todos()]
+        assert len(set(positions)) == len(positions)
 
     def test_update_item(self, store):
         item = TodoItem(title="原标题")

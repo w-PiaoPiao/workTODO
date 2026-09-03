@@ -121,10 +121,19 @@ class TodoStore:
         self._dirty_archived = False
 
     def add_item(self, item: TodoItem) -> None:
-        """添加一条新待办（自动分配 position，标记脏）"""
+        """添加一条新待办（position 插到非置顶区最上方，标记脏）
+
+        展示排序为 (not sticky, position, created_at)：置顶块在顶部，
+        其余按 position 升序。新待办取非置顶项的最小 position（非置顶整体后移腾位），
+        而非沿用旧的 max+1 追加到最下方；也不与最小值撞车——position 相同
+        会靠 created_at 决胜反而落到最下方。置顶项 position 不动。
+        """
         items = self.load_todos()
-        max_pos = max((i.position for i in items), default=0)
-        item.position = max_pos + 1
+        min_pos = min((i.position for i in items if not i.sticky), default=0)
+        for other in items:
+            if not other.sticky:
+                other.position += 1
+        item.position = min_pos
         items.append(item)
         self._dirty_todos = True
 
